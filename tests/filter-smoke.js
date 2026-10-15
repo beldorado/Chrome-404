@@ -132,7 +132,7 @@ async function run() {
 
   const swept = await render((engine) => {
     filter('bus1', { type: 'LPF', cutoff: 20000 })(engine);
-    engine.setParam('bus1', 'cutoff', 300);
+    engine.setParam('bus1', 0, 'cutoff', 300);
   });
   check('setParam sweeps cutoff live', db(highBand(swept.samples) / dryHigh) < -20, `high band ${db(highBand(swept.samples) / dryHigh).toFixed(1)} dB`);
 
@@ -146,30 +146,30 @@ async function run() {
 
   const clamped = (await render((engine) => {
     filter('bus1', { cutoff: 999999, type: 'NOPE' })(engine);
-    engine.setParam('bus1', 'resonance', -5);
+    engine.setParam('bus1', 0, 'resonance', -5);
     engine.setBpm(9999);
   })).engine.state;
   check(
     'Params and BPM are sanitized',
-    clamped.buses.bus1.params.cutoff === 20000 && clamped.buses.bus1.params.type === 'LPF' && clamped.buses.bus1.params.resonance === 0 && clamped.bpm === 240,
-    JSON.stringify({ cutoff: clamped.buses.bus1.params.cutoff, type: clamped.buses.bus1.params.type, resonance: clamped.buses.bus1.params.resonance, bpm: clamped.bpm })
+    slot0(clamped, 'bus1').params.cutoff === 20000 && slot0(clamped, 'bus1').params.type === 'LPF' && slot0(clamped, 'bus1').params.resonance === 0 && clamped.bpm === 240,
+    JSON.stringify({ cutoff: slot0(clamped, 'bus1').params.cutoff, type: slot0(clamped, 'bus1').params.type, resonance: slot0(clamped, 'bus1').params.resonance, bpm: clamped.bpm })
   );
 
   const unknown = (await render((engine) => engine.setBusEffect('bus1', 'not-a-real-effect'))).engine.state;
-  check('Unknown effects are refused', unknown.buses.bus1.effect === null, `bus1.effect = ${unknown.buses.bus1.effect}`);
+  check('Unknown effects are refused', slot0(unknown, 'bus1').effect === null, `bus1.effect = ${slot0(unknown, 'bus1').effect}`);
 
   const wrongBus = (await render((engine) => engine.setBusEffect('input', 'scatter'))).engine.state;
-  check('Effects are refused on buses they do not support', wrongBus.buses.input.effect === null, `input.effect = ${wrongBus.buses.input.effect}`);
+  check('Effects are refused on buses they do not support', slot0(wrongBus, 'input').effect === null, `input.effect = ${slot0(wrongBus, 'input').effect}`);
 
   const preset = (await render((engine) => engine.loadPreset(PRESETS.classic))).engine.state;
   check(
-    'Classic 404 preset loads its chain',
-    preset.buses.bus1.effect === 'lofi' && preset.buses.bus3.effect === 'vinyl-sim' && preset.buses.bus4.effect === 'compressor',
+    'Classic 404 preset loads its chains',
+    JSON.stringify(preset.buses.bus4.slots.map((s) => s.effect)) === JSON.stringify(['lofi', 'vinyl-sim', 'compressor']) && slot0(preset, 'master').effect === 'limiter',
     JSON.stringify(BUS_EFFECTS(preset))
   );
 
   const smoke = await render((engine) => engine.loadPreset(PRESETS.filterSmoke));
-  check('Filter smoke preset loads and filters', smoke.engine.state.buses.bus1.effect === 'filter-drive' && db(highBand(smoke.samples) / dryHigh) < -15, `high band ${db(highBand(smoke.samples) / dryHigh).toFixed(1)} dB`);
+  check('Filter smoke preset loads and filters', slot0(smoke.engine.state, 'bus1').effect === 'filter-drive' && db(highBand(smoke.samples) / dryHigh) < -15, `high band ${db(highBand(smoke.samples) / dryHigh).toFixed(1)} dB`);
 
   const roundTrip = await render((engine) => {
     const source = new AudioEngine(new OfflineAudioContext(2, RATE, RATE));
@@ -177,7 +177,7 @@ async function run() {
     source.setBpm(123);
     engine.applySettings(JSON.parse(JSON.stringify(source.settings())));
   });
-  check('Saved settings restore into a fresh engine', roundTrip.engine.state.bpm === 123 && roundTrip.engine.state.buses.bus1.enabled && db(highBand(roundTrip.samples) / dryHigh) < -15, `bpm ${roundTrip.engine.state.bpm}`);
+  check('Saved settings restore into a fresh engine', roundTrip.engine.state.bpm === 123 && slot0(roundTrip.engine.state, 'bus1').enabled && db(highBand(roundTrip.samples) / dryHigh) < -15, `bpm ${roundTrip.engine.state.bpm}`);
 
   const windowed = (x, size = 0.05) => {
     const out = [];
@@ -188,39 +188,80 @@ async function run() {
   const lfoOn = (shape, extra = {}) => (engine) => {
     engine.setBpm(120);
     filter('bus1', { type: 'LPF', resonance: 0 })(engine);
-    engine.setLfo('bus1', { target: 'cutoff', shape, sync: '1/4', depth: 1, ...extra });
+    engine.setLfo('bus1', 0, { target: 'cutoff', shape, sync: '1/4', depth: 1, ...extra });
   };
   const steady = await render(filter('bus1', { type: 'LPF', resonance: 0 }), {}, { seconds: 2, modulate: true });
   const lfoSquare = await render(lfoOn('Square'), {}, { seconds: 2, modulate: true });
   check('LFO off: filtered noise stays steady', swing(steady.samples) < 3, `window swing ${swing(steady.samples).toFixed(1)} dB`);
   check('LFO square on cutoff (1/4 @120) swings the highs hard', swing(lfoSquare.samples) > 20, `window swing ${swing(lfoSquare.samples).toFixed(1)} dB`);
-  check('LFO keeps the user base value in state', lfoSquare.engine.state.buses.bus1.params.cutoff === 1200, `cutoff = ${lfoSquare.engine.state.buses.bus1.params.cutoff}`);
+  check('LFO keeps the user base value in state', slot0(lfoSquare.engine.state, 'bus1').params.cutoff === 1200, `cutoff = ${slot0(lfoSquare.engine.state, 'bus1').params.cutoff}`);
 
   const free = await render(lfoOn('Sine', { sync: 'Free', rate: 2 }), {}, { seconds: 2, modulate: true });
   check('LFO free-running at 2 Hz modulates too', swing(free.samples) > 10, `window swing ${swing(free.samples).toFixed(1)} dB`);
 
   const sanitized = (await render((engine) => {
     filter('bus1', {})(engine);
-    engine.setLfo('bus1', { target: 'type', depth: 7, shape: 'Nope' });
-  })).engine.state.buses.bus1.lfo;
+    engine.setLfo('bus1', 0, { target: 'type', depth: 7, shape: 'Nope' });
+  })).engine.state.buses.bus1.slots[0].lfo;
   check('LFO refuses enum targets and clamps settings', sanitized.target === null && sanitized.depth === 1 && sanitized.shape === 'Sine', JSON.stringify(sanitized));
 
-  const switched = (await render((engine) => {
-    filter('bus1', {})(engine);
-    engine.setLfo('bus1', { target: 'cutoff' });
+  const reverbTime = (await render((engine) => {
     engine.setBusEffect('bus2', 'reverb');
-    engine.setLfo('bus2', { target: 'time' });
-    engine.setBusEffect('bus1', 'delay');
-  })).engine.state.buses;
-  check('Switching effect drops an LFO target the new effect lacks', switched.bus1.lfo.target === null, `bus1 target = ${switched.bus1.lfo.target}`);
-  check('Non-modulatable params (Reverb Time) are refused', switched.bus2.lfo.target === null, `bus2 target = ${switched.bus2.lfo.target}`);
+    engine.setLfo('bus2', 0, { target: 'time' });
+  })).engine.state;
+  check('Non-modulatable params (Reverb Time) are refused', slot0(reverbTime, 'bus2').lfo.target === null, `target = ${slot0(reverbTime, 'bus2').lfo.target}`);
 
-  const keepsMix = (await render((engine) => {
-    filter('bus1', {})(engine);
-    engine.setLfo('bus1', { target: 'mix' });
-    engine.setBusEffect('bus1', 'delay');
-  })).engine.state.buses.bus1.lfo;
-  check('Mix stays a valid LFO target across effects', keepsMix.target === 'mix', `target = ${keepsMix.target}`);
+  const lfoTrip = await render((engine) => {
+    const source = new AudioEngine(new OfflineAudioContext(2, RATE, RATE));
+    source.addSlot('bus1', 'filter-drive');
+    source.setLfo('bus1', 0, { target: 'mix', shape: 'Saw Up', depth: 0.8 });
+    engine.applySettings(JSON.parse(JSON.stringify(source.settings())));
+  });
+  const tripLfo = slot0(lfoTrip.engine.state, 'bus1').lfo;
+  check('Slot LFO settings survive save/restore', tripLfo.target === 'mix' && tripLfo.shape === 'Saw Up' && tripLfo.depth === 0.8, JSON.stringify(tripLfo));
+
+  const lowPass = { type: 'LPF', cutoff: 300, resonance: 0 };
+  const highPass = { type: 'HPF', cutoff: 8000, resonance: 0 };
+  const lpfOnly = (await render((engine) => engine.addSlot('bus1', 'filter-drive', { params: lowPass }))).samples;
+  const series = (await render((engine) => {
+    engine.addSlot('bus1', 'filter-drive', { params: lowPass });
+    engine.addSlot('bus1', 'filter-drive', { params: highPass });
+  })).samples;
+  check('Two slots on one bus run in series (LPF 300 then HPF 8k is near silence)', db(rms(series) / rms(dry)) < -30, `overall ${db(rms(series) / rms(dry)).toFixed(1)} dB`);
+
+  const oneOff = (await render((engine) => {
+    engine.addSlot('bus1', 'filter-drive', { params: lowPass });
+    const uid = engine.addSlot('bus1', 'filter-drive', { params: highPass });
+    engine.setSlotEnabled('bus1', uid, false);
+  })).samples;
+  check('Turning one slot off bypasses only that slot', maxDiff(oneOff, lpfOnly) < 1e-4, `max diff vs LPF alone ${maxDiff(oneOff, lpfOnly).toExponential(2)}`);
+
+  const removed = await render((engine) => {
+    engine.addSlot('bus1', 'filter-drive', { params: lowPass });
+    const uid = engine.addSlot('bus1', 'filter-drive', { params: highPass });
+    engine.removeSlot('bus1', uid);
+  });
+  check('Removing a slot rewires the chain', removed.engine.state.buses.bus1.slots.length === 1 && maxDiff(removed.samples, lpfOnly) < 1e-4, `max diff vs LPF alone ${maxDiff(removed.samples, lpfOnly).toExponential(2)}`);
+
+  const chainOf = (moveIt) =>
+    render((engine) => {
+      engine.addSlot('bus1', 'filter-drive', { params: { type: 'LPF', cutoff: 2000, resonance: 0, drive: 1 } });
+      engine.addSlot('bus1', 'bit-crusher', { params: { bits: 3, rate: 48000 } });
+      if (moveIt) engine.moveSlot('bus1', 1, -1);
+    });
+  const original = await chainOf(false);
+  const moved = await chainOf(true);
+  const movedOrder = moved.engine.state.buses.bus1.slots.map((s) => s.effect);
+  check(
+    'Moving a slot reorders the chain (and changes the sound)',
+    JSON.stringify(movedOrder) === JSON.stringify(['bit-crusher', 'filter-drive']) && maxDiff(original.samples, moved.samples) > 0.01,
+    `order ${movedOrder.join(' > ')}, max diff ${maxDiff(original.samples, moved.samples).toFixed(3)}`
+  );
+
+  const full = (await render((engine) => {
+    for (let i = 0; i < 12; i++) engine.addSlot('bus1', 'equalizer');
+  })).engine.state;
+  check('A bus holds at most 8 effects', full.buses.bus1.slots.length === 8, `slots = ${full.buses.bus1.slots.length}`);
 
   const half = (await render(filter('bus1', { type: 'LPF', cutoff: 300, resonance: 0, mix: 0.5 }))).samples;
   check('Bus Mix 50% blends dry and wet (equal power)', db(highBand(half) / dryHigh) > -4 && db(highBand(half) / dryHigh) < -2, `high band ${db(highBand(half) / dryHigh).toFixed(2)} dB`);
@@ -230,10 +271,13 @@ async function run() {
   const legacy = await render((engine) => {
     engine.applySettings({ bpm: 100, master: 0.8, inputRoute: 'bus1', buses: { bus1: { effect: 'filter-drive', enabled: true, params: { cutoff: 300 } } } });
   });
-  check('Old saved settings (no Master FX/autoBpm) still load', legacy.engine.state.buses.master.effect === null && legacy.engine.state.autoBpm === false && legacy.engine.state.bpm === 100, `master.effect=${legacy.engine.state.buses.master.effect} autoBpm=${legacy.engine.state.autoBpm}`);
+  const migrated = slot0(legacy.engine.state, 'bus1');
+  check('Old single-effect buses migrate to a one-slot chain', legacy.engine.state.buses.bus1.slots.length === 1 && migrated.effect === 'filter-drive' && migrated.enabled && migrated.params.cutoff === 300, JSON.stringify(BUS_EFFECTS(legacy.engine.state)));
+  check('Old saved settings (no Master FX/autoBpm) still load', slot0(legacy.engine.state, 'master').effect === null && legacy.engine.state.autoBpm === false && legacy.engine.state.bpm === 100, `master.effect=${slot0(legacy.engine.state, 'master').effect} autoBpm=${legacy.engine.state.autoBpm}`);
 }
 
-const BUS_EFFECTS = (state) => Object.values(state.buses).map((b) => b.effect);
+const BUS_EFFECTS = (state) => Object.values(state.buses).map((b) => b.slots.map((s) => s.effect));
+const slot0 = (state, busId) => state.buses[busId].slots[0] ?? { effect: null };
 
 run()
   .catch((err) => check('Harness crashed', false, err.stack))

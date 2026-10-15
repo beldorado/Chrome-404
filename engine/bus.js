@@ -1,7 +1,4 @@
-import { MIX_PARAM, createEffect } from '../effects/registry.js';
-
-const CROSSFADE = 0.01;
-const MAX_LATENCY = 0.1;
+import { Slot } from './slot.js';
 
 export class Bus {
   constructor(ctx, id) {
@@ -9,69 +6,65 @@ export class Bus {
     this.id = id;
     this.input = ctx.createGain();
     this.output = ctx.createGain();
-    this.bypass = ctx.createGain();
-    this.dryDelay = ctx.createDelay(MAX_LATENCY);
-    this.dry = ctx.createGain();
-    this.wet = ctx.createGain();
-    this.dry.gain.value = 0;
-    this.wet.gain.value = 0;
-    this.input.connect(this.bypass).connect(this.output);
-    this.input.connect(this.dryDelay).connect(this.dry).connect(this.output);
-    this.wet.connect(this.output);
-    this.effect = null;
-    this.enabled = false;
-    this.mixAmount = 1;
+    this.slots = [];
+    this.wire();
   }
 
-  setEffect(effectId, params, context) {
-    if (this.effect) {
-      this.input.disconnect(this.effect.input);
-      this.effect.dispose();
-      this.effect = null;
-    }
-    this.lastActive = null;
-    if (effectId) {
-      this.effect = createEffect(this.ctx, effectId, params, context);
-      this.input.connect(this.effect.input);
-      this.effect.output.connect(this.wet);
-      this.dryDelay.delayTime.value = Math.min(MAX_LATENCY, this.effect.latency);
-      this.mixAmount = params[MIX_PARAM] ?? 1;
-    }
-    this.mix();
+  wire() {
+    this.input.disconnect();
+    for (const slot of this.slots) slot.output.disconnect();
+    const last = this.slots.reduce((node, slot) => {
+      node.connect(slot.input);
+      return slot.output;
+    }, this.input);
+    last.connect(this.output);
   }
 
-  setEnabled(enabled) {
-    this.enabled = enabled;
-    this.mix();
+  slot(uid) {
+    return this.slots.find((s) => s.uid === uid) ?? null;
   }
 
-  setParam(id, value) {
-    if (id === MIX_PARAM) {
-      this.mixAmount = value;
-      this.mix();
-    } else {
-      this.effect?.setParam(id, value);
-    }
+  add(uid, effectId, params, context) {
+    const slot = new Slot(this.ctx, uid);
+    slot.setEffect(effectId, params, context);
+    this.slots.push(slot);
+    this.wire();
+    return slot;
+  }
+
+  remove(uid) {
+    const slot = this.slot(uid);
+    if (!slot) return;
+    this.slots = this.slots.filter((s) => s !== slot);
+    this.wire();
+    slot.dispose();
+  }
+
+  move(uid, index) {
+    const slot = this.slot(uid);
+    if (!slot) return;
+    this.slots = this.slots.filter((s) => s !== slot);
+    this.slots.splice(Math.max(0, Math.min(index, this.slots.length)), 0, slot);
+    this.wire();
+  }
+
+  clear() {
+    const old = this.slots;
+    this.slots = [];
+    this.wire();
+    old.forEach((slot) => slot.dispose());
   }
 
   setTempo(bpm) {
-    this.effect?.setTempo?.(bpm);
+    this.slots.forEach((slot) => slot.setTempo(bpm));
   }
 
-  meter() {
-    return this.enabled ? (this.effect?.meter?.() ?? null) : null;
-  }
-
-  mix() {
-    const active = this.enabled && this.effect !== null;
-    if (active !== this.lastActive) {
-      this.effect?.setActive?.(active);
-      this.lastActive = active;
+  meters() {
+    const readings = {};
+    for (const slot of this.slots) {
+      const reading = slot.meter();
+      if (reading) readings[slot.uid] = reading;
     }
-    const now = this.ctx.currentTime;
-    const angle = (this.mixAmount * Math.PI) / 2;
-    this.bypass.gain.setTargetAtTime(active ? 0 : 1, now, CROSSFADE);
-    this.dry.gain.setTargetAtTime(active ? Math.cos(angle) : 0, now, CROSSFADE);
-    this.wet.gain.setTargetAtTime(active ? Math.sin(angle) : 0, now, CROSSFADE);
+    return readings;
   }
 }

@@ -1,6 +1,6 @@
 import { Bus } from './bus.js';
 import { TempoDetector } from './tempo-detector.js';
-import { BUS_IDS, ROUTES, defaultBus, defaultState, settingsFrom } from '../shared/state.js';
+import { BUS_IDS, MAX_SLOTS, ROUTES, defaultState, settingsFrom } from '../shared/state.js';
 import { defaultParams, getEffect, isAvailable } from '../effects/registry.js';
 import { clamp, fromNormalized, sanitizeParam, toNormalized } from '../shared/params.js';
 import { LFO_PARAMS, Lfo, defaultLfo, isModulatable } from '../shared/lfo.js';
@@ -11,6 +11,7 @@ const MASTER_MAX = 1.5;
 const AUTO_BPM_CONFIDENCE = 0.2;
 const AUTO_BPM_MIN_CHANGE = 0.5;
 const MAX_TICK = 0.25;
+const LFO_SEED = 0x9e3779b9;
 
 export class AudioEngine {
   constructor(ctx, { destination = ctx.destination, onChange = () => {} } = {}) {
@@ -21,7 +22,8 @@ export class AudioEngine {
     this.batchDepth = 0;
     this.tempo = null;
     this.lastTick = null;
-    this.lfos = Object.fromEntries(BUS_IDS.map((id, i) => [id, new Lfo(0x9e3779b9 + i * 7919)]));
+    this.slotCounter = 0;
+    this.lfos = new Map();
 
     this.buses = Object.fromEntries(BUS_IDS.map((id) => [id, new Bus(ctx, id)]));
     this.dry = ctx.createGain();
@@ -129,20 +131,87 @@ export class AudioEngine {
     this.emit();
   }
 
-  setBusEffect(busId, effectId, params = {}) {
+  resolveSlot(busId, ref) {
+    const slots = this.state.buses[busId]?.slots;
+    if (!slots) return null;
+    return (typeof ref === 'number' ? slots[ref] : slots.find((s) => s.uid === ref)) ?? null;
+  }
+
+  addSlot(busId, effectId, { params = {}, enabled = true } = {}) {
     const bus = this.buses[busId];
-    if (!bus) return;
-    const id = effectId && isAvailable(effectId, busId) ? effectId : null;
-    const effect = id ? getEffect(id) : null;
-    const merged = { ...defaultParams(id) };
-    for (const def of effect?.params ?? []) {
+    const busState = this.state.buses[busId];
+    if (!bus || !isAvailable(effectId, busId) || busState.slots.length >= MAX_SLOTS) return null;
+    const uid = `fx${++this.slotCounter}`;
+    const merged = { ...defaultParams(effectId) };
+    for (const def of getEffect(effectId).params) {
       if (def.id in params) merged[def.id] = sanitizeParam(def, params[def.id]);
     }
-    bus.setEffect(id, merged, { bpm: this.state.bpm });
+    bus.add(uid, effectId, merged, { bpm: this.state.bpm }).setEnabled(Boolean(enabled));
+    busState.slots.push({ uid, effect: effectId, enabled: Boolean(enabled), params: merged, lfo: defaultLfo() });
+    this.lfos.set(uid, new Lfo(LFO_SEED + this.slotCounter * 7919));
+    this.emit();
+    return uid;
+  }
+
+  removeSlot(busId, ref) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot) return;
+    this.buses[busId].remove(slot.uid);
+    this.state.buses[busId].slots = this.state.buses[busId].slots.filter((s) => s !== slot);
+    this.lfos.delete(slot.uid);
+    this.emit();
+  }
+
+  moveSlot(busId, ref, delta) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot) return;
+    const slots = this.state.buses[busId].slots;
+    const index = clamp(slots.indexOf(slot) + Math.sign(delta), 0, slots.length - 1);
+    slots.splice(slots.indexOf(slot), 1);
+    slots.splice(index, 0, slot);
+    this.buses[busId].move(slot.uid, index);
+    this.emit();
+  }
+
+  clearBus(busId) {
     const busState = this.state.buses[busId];
-    const lfo = { ...defaultLfo(), ...busState.lfo };
-    lfo.target = this.validTarget(id, lfo.target);
-    Object.assign(busState, { effect: id, params: merged, lfo });
+    if (!busState) return;
+    busState.slots.forEach((s) => this.lfos.delete(s.uid));
+    busState.slots = [];
+    this.buses[busId].clear();
+    this.emit();
+  }
+
+  setSlotEnabled(busId, ref, enabled) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot) return;
+    slot.enabled = Boolean(enabled);
+    this.buses[busId].slot(slot.uid).setEnabled(slot.enabled);
+    this.emit();
+  }
+
+  setBusEffect(busId, effectId, params = {}) {
+    if (!this.buses[busId]) return;
+    this.batch(() => {
+      this.clearBus(busId);
+      if (effectId) this.addSlot(busId, effectId, { params, enabled: false });
+    });
+  }
+
+  setBusEnabled(busId, enabled) {
+    const busState = this.state.buses[busId];
+    if (!busState) return;
+    this.batch(() => busState.slots.forEach((s) => this.setSlotEnabled(busId, s.uid, enabled)));
+  }
+
+  setParam(busId, ref, paramId, value) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot) return;
+    const def = getEffect(slot.effect).params.find((p) => p.id === paramId);
+    if (!def) return;
+    const v = sanitizeParam(def, value);
+    slot.params[paramId] = v;
+    this.buses[busId].slot(slot.uid).setParam(paramId, v);
     this.emit();
   }
 
@@ -152,19 +221,19 @@ export class AudioEngine {
     return def && isModulatable(def) ? target : null;
   }
 
-  setLfo(busId, changes = {}) {
-    const busState = this.state.buses[busId];
-    if (!busState) return;
-    const lfo = { ...defaultLfo(), ...busState.lfo };
+  setLfo(busId, ref, changes = {}) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot) return;
+    const lfo = { ...defaultLfo(), ...slot.lfo };
     for (const def of LFO_PARAMS) {
       if (def.id in changes) lfo[def.id] = sanitizeParam(def, changes[def.id]);
     }
     if ('target' in changes) {
       const previous = lfo.target;
-      lfo.target = this.validTarget(busState.effect, changes.target);
-      if (previous && previous !== lfo.target && busState.effect) this.buses[busId].setParam(previous, busState.params[previous]);
+      lfo.target = this.validTarget(slot.effect, changes.target);
+      if (previous && previous !== lfo.target) this.buses[busId].slot(slot.uid).setParam(previous, slot.params[previous]);
     }
-    busState.lfo = lfo;
+    slot.lfo = lfo;
     this.emit();
   }
 
@@ -172,35 +241,18 @@ export class AudioEngine {
     const dt = this.lastTick === null ? 0 : clamp(now - this.lastTick, 0, MAX_TICK);
     this.lastTick = now;
     for (const busId of BUS_IDS) {
-      const { effect, lfo, params } = this.state.buses[busId];
-      if (!effect || !lfo?.target) continue;
-      const def = getEffect(effect).params.find((p) => p.id === lfo.target);
-      if (!def) continue;
-      const cycle = lfo.sync === 'Free' ? 1 / lfo.rate : (divisionBeats(lfo.sync) * 60) / this.state.bpm;
-      const osc = this.lfos[busId];
-      osc.advance(dt, cycle);
-      const normalized = clamp(toNormalized(def, params[lfo.target]) + lfo.depth * 0.5 * osc.value(lfo.shape), 0, 1);
-      this.buses[busId].setParam(lfo.target, fromNormalized(def, normalized));
+      for (const slot of this.state.buses[busId].slots) {
+        const { lfo, params } = slot;
+        if (!lfo?.target) continue;
+        const def = getEffect(slot.effect).params.find((p) => p.id === lfo.target);
+        const osc = this.lfos.get(slot.uid);
+        if (!def || !osc) continue;
+        const cycle = lfo.sync === 'Free' ? 1 / lfo.rate : (divisionBeats(lfo.sync) * 60) / this.state.bpm;
+        osc.advance(dt, cycle);
+        const normalized = clamp(toNormalized(def, params[lfo.target]) + lfo.depth * 0.5 * osc.value(lfo.shape), 0, 1);
+        this.buses[busId].slot(slot.uid).setParam(lfo.target, fromNormalized(def, normalized));
+      }
     }
-  }
-
-  setBusEnabled(busId, enabled) {
-    const bus = this.buses[busId];
-    if (!bus) return;
-    bus.setEnabled(Boolean(enabled));
-    this.state.buses[busId].enabled = Boolean(enabled);
-    this.emit();
-  }
-
-  setParam(busId, paramId, value) {
-    const busState = this.state.buses[busId];
-    if (!busState?.effect) return;
-    const def = getEffect(busState.effect).params.find((p) => p.id === paramId);
-    if (!def) return;
-    const v = sanitizeParam(def, value);
-    busState.params[paramId] = v;
-    this.buses[busId].setParam(paramId, v);
-    this.emit();
   }
 
   setInputRoute(route) {
@@ -224,6 +276,11 @@ export class AudioEngine {
     this.emit();
   }
 
+  static slotsFromSaved(bus) {
+    if (Array.isArray(bus.slots)) return bus.slots;
+    return bus.effect ? [{ effect: bus.effect, enabled: bus.enabled, params: bus.params, lfo: bus.lfo }] : [];
+  }
+
   applySettings(saved) {
     if (!saved) return;
     this.batch(() => {
@@ -234,15 +291,17 @@ export class AudioEngine {
       for (const busId of BUS_IDS) {
         const bus = saved.buses?.[busId];
         if (!bus) continue;
-        this.setBusEffect(busId, bus.effect, bus.params);
-        this.setBusEnabled(busId, bus.enabled);
-        if (bus.lfo) this.setLfo(busId, bus.lfo);
+        this.clearBus(busId);
+        for (const spec of AudioEngine.slotsFromSaved(bus)) {
+          const uid = this.addSlot(busId, spec.effect, { params: spec.params, enabled: spec.enabled ?? true });
+          if (uid && spec.lfo) this.setLfo(busId, uid, spec.lfo);
+        }
       }
     });
   }
 
   loadPreset(preset) {
-    const buses = Object.fromEntries(BUS_IDS.map((id) => [id, { ...defaultBus(), ...preset.buses[id] }]));
+    const buses = Object.fromEntries(BUS_IDS.map((id) => [id, { slots: preset.buses[id] ?? [] }]));
     this.applySettings({ buses });
   }
 
@@ -262,12 +321,9 @@ export class AudioEngine {
       peak = Math.max(peak, Math.abs(v));
       sum += v * v;
     }
-    const buses = {};
-    for (const busId of BUS_IDS) {
-      const reading = this.buses[busId].meter();
-      if (reading) buses[busId] = reading;
-    }
-    return { peak, rms: Math.sqrt(sum / this.meterBuffer.length), buses };
+    const slots = {};
+    for (const bus of Object.values(this.buses)) Object.assign(slots, bus.meters());
+    return { peak, rms: Math.sqrt(sum / this.meterBuffer.length), slots };
   }
 
   batch(fn) {

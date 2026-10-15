@@ -1,5 +1,5 @@
 import { MSG, TARGET } from '../shared/messages.js';
-import { BUS_IDS, BUS_LABELS, DEFAULT_MASTER, ROUTES, ROUTE_LABELS } from '../shared/state.js';
+import { BUS_IDS, BUS_LABELS, DEFAULT_MASTER, MAX_SLOTS, ROUTES, ROUTE_LABELS } from '../shared/state.js';
 import { getEffect, listEffects } from '../effects/registry.js';
 import { clamp, formatValue, fromNormalized, toNormalized } from '../shared/params.js';
 import { TapTempo } from '../shared/tempo.js';
@@ -11,13 +11,16 @@ import { LFO_PARAMS, isModulatable } from '../shared/lfo.js';
 
 const SLIDER_STEPS = 1000;
 const AUTO_CONFIDENT = 0.2;
+const GR_RANGE_DB = 24;
+const MASTER_MAX = 1.5;
 const $ = (id) => document.getElementById(id);
 
 let state = null;
 let structureKey = '';
 let pointerDown = false;
 let pending = [];
-const editors = {};
+const editors = new Map();
+const collapsed = new Set();
 const tapTempo = new TapTempo();
 const midi = new MidiLearn({ onControl: handleMidi, onStatus: showStatus });
 
@@ -46,10 +49,7 @@ function setState(next) {
   const key = JSON.stringify([
     next.sources,
     next.inputRoute,
-    BUS_IDS.map((id) => {
-      const { effect, lfo } = next.buses[id];
-      return [effect, lfo?.target, lfo?.sync === 'Free'];
-    })
+    BUS_IDS.map((id) => next.buses[id].slots.map((s) => [s.uid, s.effect, s.lfo?.target, s.lfo?.sync === 'Free', collapsed.has(s.uid)]))
   ]);
   if (key !== structureKey) {
     structureKey = key;
@@ -59,6 +59,11 @@ function setState(next) {
   }
   updateValues();
   if (!next.sources.length) updateMeter({ peak: 0 });
+}
+
+function rerender() {
+  structureKey = '';
+  setState(state);
 }
 
 function routeSelect(value, onchange) {
@@ -96,7 +101,7 @@ function renderPending() {
         'li',
         { className: 'pending-item' },
         h('span', { className: 'source-label', title: p.title, textContent: p.title }),
-        h('button', { type: 'button', title: 'Switch to this tab', textContent: 'GO', onclick: () => goToTab(p) })
+        h('button', { type: 'button', title: 'Switch to this tab', textContent: 'Go', onclick: () => goToTab(p) })
       )
     )
   );
@@ -108,78 +113,161 @@ async function goToTab({ tabId, windowId }) {
   await chrome.windows.update(windowId, { focused: true });
 }
 
-function renderBuses() {
-  $('buses').replaceChildren(...BUS_IDS.map(renderBus));
-}
-
-function effectSelect(busId, current) {
-  const select = h('select', { onchange: (e) => chooseEffect(busId, e.target.value || null) }, h('option', { value: '', textContent: 'No effect' }));
+function fillEffectOptions(select, busId) {
   const groups = new Map();
   for (const effect of listEffects(busId)) {
+    if (!effect.available) continue;
     if (!groups.has(effect.category)) groups.set(effect.category, h('optgroup', { label: effect.category }));
-    groups.get(effect.category).append(
-      h('option', { value: effect.id, textContent: effect.available ? effect.name : `${effect.name} (soon)`, disabled: !effect.available })
-    );
+    groups.get(effect.category).append(h('option', { value: effect.id, textContent: effect.name }));
   }
-  select.append(...groups.values());
-  select.value = current ?? '';
-  return select;
+  const previous = select.value;
+  select.replaceChildren(...groups.values());
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
 }
 
-async function chooseEffect(busId, effectId) {
-  await send(MSG.SET_BUS_EFFECT, { busId, effectId });
-  if (effectId) await send(MSG.SET_BUS_ENABLED, { busId, enabled: true });
+function bindAddBar() {
+  const bus = $('add-bus');
+  const fx = $('add-fx');
+  bus.append(...BUS_IDS.map((id) => h('option', { value: id, textContent: BUS_LABELS[id] })));
+  bus.addEventListener('change', () => fillEffectOptions(fx, bus.value));
+  fillEffectOptions(fx, bus.value);
+  $('add-go').addEventListener('click', () => addSlot(bus.value, fx.value));
+}
+
+async function addSlot(busId, effectId) {
+  if (!effectId) return;
+  if (state.buses[busId].slots.length >= MAX_SLOTS) {
+    showStatus(`${BUS_LABELS[busId]} is full (${MAX_SLOTS} effects). Remove one to add another.`);
+    return;
+  }
+  await send(MSG.ADD_SLOT, { busId, effectId });
+  const slots = state.buses[busId].slots;
+  document.querySelector(`.slot[data-slot="${slots[slots.length - 1]?.uid}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function pickBus(busId) {
+  const bus = $('add-bus');
+  bus.value = busId;
+  fillEffectOptions($('add-fx'), busId);
+  $('add-bar').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  $('add-fx').focus();
+}
+
+function renderBuses() {
+  editors.clear();
+  $('buses').replaceChildren(...BUS_IDS.map(renderBus));
 }
 
 function renderBus(busId) {
   const bus = state.buses[busId];
+  const head = h(
+    'div',
+    { className: 'bus-head' },
+    h('h2', { textContent: BUS_LABELS[busId] }),
+    h('span', { className: 'bus-count', dataset: { role: 'count' } }),
+    h('button', { type: 'button', className: 'bus-add', title: `Add an effect to ${BUS_LABELS[busId]}`, textContent: '+', onclick: () => pickBus(busId) })
+  );
+  const el = h('div', { className: 'bus', dataset: { bus: busId } }, head);
+  const busRows = [];
+  if (busId === 'input') {
+    busRows.push(h('div', { className: 'param' }, h('label', { textContent: 'Route' }), routeSelect(state.inputRoute, (route) => send(MSG.SET_INPUT_ROUTE, { route })), h('output')));
+  }
+  if (busRows.length) el.append(h('div', { className: 'params' }, ...busRows));
+  if (bus.slots.length) el.append(h('ol', { className: 'chain' }, ...bus.slots.map((slot, i) => renderSlot(busId, slot, i, bus.slots.length))));
+  else el.append(h('p', { className: 'hint empty-bus', textContent: 'No effects. Press + to add one.' }));
+  if (busId === 'master') el.append(h('div', { className: 'params' }, renderMasterVolume()));
+  return el;
+}
+
+function renderSlot(busId, slot, index, count) {
+  const effect = getEffect(slot.effect);
+  const ref = { busId, slot: slot.uid };
+  const open = !collapsed.has(slot.uid);
   const toggle = h('button', {
     type: 'button',
     className: 'bus-toggle',
     dataset: { role: 'toggle' },
-    onclick: () => send(MSG.SET_BUS_ENABLED, { busId, enabled: !state.buses[busId].enabled })
+    onclick: () => send(MSG.SET_SLOT_ENABLED, { ...ref, enabled: !currentSlot(busId, slot.uid)?.enabled })
   });
-  const el = h('div', { className: 'bus', dataset: { bus: busId } }, h('div', { className: 'bus-head' }, toggle, h('h2', { textContent: BUS_LABELS[busId] }), effectSelect(busId, bus.effect)));
-  const rows = [];
-  if (busId === 'input') {
-    rows.push(h('div', { className: 'param' }, h('label', { textContent: 'Route' }), routeSelect(state.inputRoute, (route) => send(MSG.SET_INPUT_ROUTE, { route })), h('output')));
+  const name = h(
+    'button',
+    {
+      type: 'button',
+      className: 'slot-name',
+      'aria-expanded': String(open),
+      title: open ? 'Hide controls' : 'Show controls',
+      onclick: () => {
+        if (open) collapsed.add(slot.uid);
+        else collapsed.delete(slot.uid);
+        rerender();
+      }
+    },
+    h('span', { className: 'chevron', textContent: open ? '▾' : '▸' }),
+    effect.name
+  );
+  const move = (delta, label, glyph, disabled) => h('button', { type: 'button', className: 'slot-tool', title: label, textContent: glyph, disabled, onclick: () => send(MSG.MOVE_SLOT, { ...ref, delta }) });
+  const head = h(
+    'div',
+    { className: 'slot-head' },
+    toggle,
+    name,
+    move(-1, 'Move earlier in the chain', '↑', index === 0),
+    move(1, 'Move later in the chain', '↓', index === count - 1),
+    h('button', { type: 'button', className: 'slot-tool', title: `Remove ${effect.name}`, textContent: '✕', onclick: () => send(MSG.REMOVE_SLOT, ref) })
+  );
+  const el = h('li', { className: 'slot', dataset: { slot: slot.uid } }, head);
+  if (!open) return el;
+
+  const body = h('div', { className: 'slot-body' });
+  const editor = effect.ui && EDITORS[effect.ui] ? createEditor(busId, slot.uid, effect) : null;
+  if (editor) {
+    editors.set(slot.uid, editor);
+    body.append(editor.el);
   }
-  const effect = bus.effect ? getEffect(bus.effect) : null;
-  const editor = effect?.ui && EDITORS[effect.ui] ? createEditor(busId, effect) : null;
-  editors[busId] = editor;
-  if (editor) el.append(editor.el);
-  for (const param of effect?.params ?? []) {
-    if (!editor?.handles.includes(param.id)) rows.push(renderParam(busId, param));
-  }
-  if (busId === 'master') rows.push(renderMasterVolume());
-  if (rows.length) el.append(h('div', { className: 'params' }, ...rows));
-  if (effect) el.append(renderLfo(busId, effect));
+  const rows = effect.params.filter((p) => !editor?.handles.includes(p.id)).map((p) => renderParam(busId, slot.uid, p));
+  if (effect.meter === 'reduction') rows.push(renderReduction());
+  if (rows.length) body.append(h('div', { className: 'params' }, ...rows));
+  body.append(renderLfo(busId, slot, effect));
+  el.append(body);
   return el;
 }
 
-function createEditor(busId, effect) {
+function currentSlot(busId, uid) {
+  return state.buses[busId]?.slots.find((s) => s.uid === uid) ?? null;
+}
+
+function createEditor(busId, uid, effect) {
   return EDITORS[effect.ui]({
     params: effect.params,
-    getValues: () => state.buses[busId].params,
-    setParam: (paramId, value) => send(MSG.SET_PARAM, { busId, paramId, value }),
-    arm: (paramId, el) => armLearn(busId, paramId, el)
+    getValues: () => currentSlot(busId, uid)?.params ?? {},
+    setParam: (paramId, value) => send(MSG.SET_PARAM, { busId, slot: uid, paramId, value }),
+    arm: (paramId, el) => armLearn({ busId, uid, paramId }, el)
   });
 }
 
-function renderLfo(busId, effect) {
-  const lfo = state.buses[busId].lfo;
-  const setLfo = (changes) => send(MSG.SET_LFO, { busId, changes });
+function renderReduction() {
+  return h(
+    'div',
+    { className: 'param gr-row', title: 'Gain reduction' },
+    h('label', { textContent: 'Reduction' }),
+    h('div', { className: 'gr-bar' }, h('div', { className: 'gr-bar-fill' })),
+    h('output', { textContent: '0.0 dB' })
+  );
+}
+
+function renderLfo(busId, slot, effect) {
+  const setLfo = (changes) => send(MSG.SET_LFO, { busId, slot: slot.uid, changes });
   const target = h(
     'select',
     { onchange: (e) => setLfo({ target: e.target.value || null }) },
     h('option', { value: '', textContent: 'Off' }),
     ...effect.params.filter(isModulatable).map((p) => h('option', { value: p.id, textContent: p.name }))
   );
-  target.value = lfo?.target ?? '';
+  target.value = slot.lfo?.target ?? '';
   const rows = [h('div', { className: 'param lfo-head' }, h('label', { textContent: 'LFO' }), target, h('output'))];
-  if (lfo?.target) {
+  if (slot.lfo?.target) {
     for (const param of LFO_PARAMS) {
-      if (param.id === 'rate' && lfo.sync !== 'Free') continue;
+      if (param.id === 'rate' && slot.lfo.sync !== 'Free') continue;
       rows.push(controlRow(param, (value) => setLfo({ [param.id]: value }), { lfo: param.id }));
     }
   }
@@ -196,11 +284,11 @@ function renderMasterVolume() {
       type: 'range',
       id: 'master-volume',
       min: 0,
-      max: 1.5,
+      max: MASTER_MAX,
       step: 0.01,
       title: 'Double-click to reset',
       oninput: (e) => {
-        setFill(e.target, e.target.value / 1.5);
+        setFill(e.target, e.target.value / MASTER_MAX);
         setLevel(e.target.value);
       },
       ondblclick: () => setLevel(DEFAULT_MASTER)
@@ -209,8 +297,13 @@ function renderMasterVolume() {
   );
 }
 
-function renderParam(busId, param) {
-  return controlRow(param, (value) => send(MSG.SET_PARAM, { busId, paramId: param.id, value }), { param: param.id }, (row) => armLearn(busId, param.id, row));
+function renderParam(busId, uid, param) {
+  return controlRow(
+    param,
+    (value) => send(MSG.SET_PARAM, { busId, slot: uid, paramId: param.id, value }),
+    { param: param.id },
+    (row) => armLearn({ busId, uid, paramId: param.id }, row)
+  );
 }
 
 function controlRow(param, setValue, dataset, onArm) {
@@ -230,53 +323,12 @@ function controlRow(param, setValue, dataset, onArm) {
           ondblclick: () => setValue(param.default)
         });
   control.dataset.role = 'param';
-  return h(
-    'div',
-    { className: 'param', dataset, onpointerdown: (e) => onArm?.(e.currentTarget) },
-    h('label', { textContent: param.name }),
-    control,
-    h('output')
-  );
+  return h('div', { className: 'param', dataset, onpointerdown: (e) => onArm?.(e.currentTarget) }, h('label', { textContent: param.name }), control, h('output'));
 }
 
 function setIfIdle(el, value) {
   if (el === document.activeElement && (pointerDown || el.type === 'number')) return;
   el.value = value;
-}
-
-function updateValues() {
-  setIfIdle($('bpm'), state.bpm);
-  setIfIdle($('master-volume'), state.master);
-  setFill($('master-volume'), $('master-volume').value / 1.5);
-  $('master-readout').textContent = `${Math.round(state.master * 100)}%`;
-  $('auto').classList.toggle('on', state.autoBpm);
-  const detected = state.detected;
-  $('detected').textContent = detected ? `Heard ${detected.bpm.toFixed(1)} (${Math.round(detected.confidence * 100)}%)` : 'Heard —';
-  $('detected').classList.toggle('confident', Boolean(detected && detected.confidence >= AUTO_CONFIDENT));
-  for (const busId of BUS_IDS) {
-    const bus = state.buses[busId];
-    const el = document.querySelector(`.bus[data-bus="${busId}"]`);
-    const toggle = el.querySelector('[data-role="toggle"]');
-    toggle.classList.toggle('on', bus.enabled);
-    toggle.setAttribute('aria-pressed', String(bus.enabled));
-    toggle.title = `${BUS_LABELS[busId]} ${bus.enabled ? 'on' : 'off'}`;
-    toggle.setAttribute('aria-label', toggle.title);
-    toggle.disabled = !bus.effect;
-    el.classList.toggle('active', bus.enabled && Boolean(bus.effect));
-    const effect = bus.effect ? getEffect(bus.effect) : null;
-    for (const param of effect?.params ?? []) {
-      const row = el.querySelector(`.param[data-param="${param.id}"]`);
-      if (row) {
-        updateRow(row, param, bus.params[param.id]);
-        row.classList.toggle('modulated', bus.lfo?.target === param.id);
-      }
-    }
-    for (const param of LFO_PARAMS) {
-      const row = el.querySelector(`.param[data-lfo="${param.id}"]`);
-      if (row) updateRow(row, param, bus.lfo[param.id]);
-    }
-    editors[busId]?.update(bus.params);
-  }
 }
 
 function setFill(input, normalized) {
@@ -290,22 +342,76 @@ function updateRow(row, param, value) {
   row.querySelector('output').textContent = param.kind === 'enum' ? '' : formatValue(param, value);
 }
 
+function updateValues() {
+  setIfIdle($('bpm'), state.bpm);
+  setIfIdle($('master-volume'), state.master);
+  setFill($('master-volume'), $('master-volume').value / MASTER_MAX);
+  $('master-readout').textContent = `${Math.round(state.master * 100)}%`;
+  $('auto').classList.toggle('on', state.autoBpm);
+  const detected = state.detected;
+  $('detected').textContent = detected ? `Heard ${detected.bpm.toFixed(1)} (${Math.round(detected.confidence * 100)}%)` : 'Heard —';
+  $('detected').classList.toggle('confident', Boolean(detected && detected.confidence >= AUTO_CONFIDENT));
+
+  for (const busId of BUS_IDS) {
+    const { slots } = state.buses[busId];
+    const busEl = document.querySelector(`.bus[data-bus="${busId}"]`);
+    busEl.classList.toggle('active', slots.some((s) => s.enabled));
+    const count = busEl.querySelector('[data-role="count"]');
+    count.textContent = slots.length ? `${slots.filter((s) => s.enabled).length}/${slots.length} on` : '';
+    busEl.querySelector('.bus-add').disabled = slots.length >= MAX_SLOTS;
+
+    for (const slot of slots) {
+      const el = busEl.querySelector(`.slot[data-slot="${slot.uid}"]`);
+      if (!el) continue;
+      const toggle = el.querySelector('[data-role="toggle"]');
+      const name = getEffect(slot.effect).name;
+      toggle.classList.toggle('on', slot.enabled);
+      toggle.setAttribute('aria-pressed', String(slot.enabled));
+      toggle.title = `${name} ${slot.enabled ? 'on' : 'off'}`;
+      toggle.setAttribute('aria-label', toggle.title);
+      el.classList.toggle('active', slot.enabled);
+
+      for (const param of getEffect(slot.effect).params) {
+        const row = el.querySelector(`.param[data-param="${param.id}"]`);
+        if (!row) continue;
+        updateRow(row, param, slot.params[param.id]);
+        row.classList.toggle('modulated', slot.lfo?.target === param.id);
+      }
+      for (const param of LFO_PARAMS) {
+        const row = el.querySelector(`.param[data-lfo="${param.id}"]`);
+        if (row) updateRow(row, param, slot.lfo[param.id]);
+      }
+      editors.get(slot.uid)?.update(slot.params);
+    }
+  }
+}
+
 function updateMeter({ peak }) {
   const db = 20 * Math.log10(Math.max(peak, 1e-5));
   $('meter').style.width = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
 }
 
-function armLearn(busId, paramId, row) {
-  if (!midi.learning) return;
-  midi.arm({ busId, paramId });
-  document.querySelectorAll('.learn-target').forEach((el) => el.classList.remove('learn-target'));
-  row.classList.add('learn-target');
+function updateSlotMeters(readings = {}) {
+  for (const [uid, editor] of editors) editor.meter?.(readings[uid]);
+  for (const row of document.querySelectorAll('.gr-row')) {
+    const uid = row.closest('.slot').dataset.slot;
+    const reduction = Math.min(0, readings[uid]?.reduction ?? 0);
+    row.querySelector('.gr-bar-fill').style.width = `${clamp(-reduction / GR_RANGE_DB, 0, 1) * 100}%`;
+    row.querySelector('output').textContent = `${reduction.toFixed(1)} dB`;
+  }
 }
 
-function handleMidi({ busId, paramId }, normalized) {
-  const effectId = state?.buses[busId]?.effect;
-  const param = effectId && getEffect(effectId).params.find((p) => p.id === paramId);
-  if (param) send(MSG.SET_PARAM, { busId, paramId, value: fromNormalized(param, normalized) });
+function armLearn(target, el) {
+  if (!midi.learning) return;
+  midi.arm(target);
+  document.querySelectorAll('.learn-target').forEach((node) => node.classList.remove('learn-target'));
+  el.classList.add('learn-target');
+}
+
+function handleMidi({ busId, uid, paramId }, normalized) {
+  const slot = uid && currentSlot(busId, uid);
+  const param = slot && getEffect(slot.effect).params.find((p) => p.id === paramId);
+  if (param) send(MSG.SET_PARAM, { busId, slot: uid, paramId, value: fromNormalized(param, normalized) });
 }
 
 function bindControls() {
@@ -335,6 +441,8 @@ function bindControls() {
     $('status').hidden = true;
   });
 
+  bindAddBar();
+
   document.addEventListener('pointerdown', () => {
     pointerDown = true;
   });
@@ -350,7 +458,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === MSG.STATE) setState(message.state);
   else if (message.type === MSG.METER) {
     updateMeter(message.level);
-    for (const busId of BUS_IDS) editors[busId]?.meter?.(message.level.buses?.[busId]);
+    updateSlotMeters(message.level.slots);
   }
   return false;
 });

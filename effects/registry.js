@@ -7,6 +7,7 @@ import cassetteSim from './cassette-sim.js';
 import lofi from './lofi.js';
 import bitCrusher from './bit-crusher.js';
 import compressor from './compressor.js';
+import limiter from './limiter.js';
 import delay from './delay.js';
 import tapeEcho from './tape-echo.js';
 import reverb from './reverb.js';
@@ -35,6 +36,7 @@ const IMPLEMENTED = [
   lofi,
   bitCrusher,
   compressor,
+  limiter,
   delay,
   tapeEcho,
   reverb,

@@ -145,6 +145,18 @@ const SPECIFIC = {
     const air = (x) => airBand(segment(x, 0.3));
     return [['48 dB slope cuts highs harder than 12 dB', db(air(steep.l), air(gentle.l)) < -6, `${db(air(steep.l), air(gentle.l)).toFixed(1)} dB vs Filter + Drive`]];
   },
+  limiter: async () => {
+    const ceiling = Math.pow(10, -6 / 20);
+    const slammed = await render({ effectId: 'limiter', params: { gain: 24, ceiling: -6 } });
+    const ref = await render({ signal: 'sine', frequency: 220 });
+    const quiet = await render({ effectId: 'limiter', signal: 'sine', frequency: 220, params: { gain: 0, ceiling: 0 } });
+    const shift = Math.round(0.005 * RATE);
+    const aligned = maxDiff(segment(quiet.l, 0.1), segment(ref.l, 0.1 - shift / RATE, 2 - shift / RATE));
+    return [
+      ['+24 dB into a -6 dB ceiling never exceeds the ceiling (after the 10 ms switch-on fade)', peak(segment(slammed.l, 0.1)) <= ceiling + 1e-6 && peak(segment(slammed.r, 0.1)) <= ceiling + 1e-6, `peak ${(20 * Math.log10(peak(segment(slammed.l, 0.1)))).toFixed(2)} dBFS (first 0.1 s: ${(20 * Math.log10(peak(segment(slammed.l, 0, 0.1)))).toFixed(2)})`],
+      ['signal below the ceiling passes untouched (5 ms lookahead)', aligned < 1e-4, `max diff ${aligned.toExponential(2)}`]
+    ];
+  },
   compressor: async (dry) => {
     const squashed = await render({ effectId: 'compressor', params: { threshold: -40, ratio: 12, attack: 0.001, makeup: 0 } });
     return [['pulls loud material down', db(rms(segment(squashed.l, 0.5)), rms(segment(dry.l, 0.5))) < -6, `${db(rms(segment(squashed.l, 0.5)), rms(segment(dry.l, 0.5))).toFixed(1)} dB vs dry`]];
@@ -245,7 +257,7 @@ async function run() {
     const label = effect.name;
 
     const def = await render({ effectId: effect.id, busId });
-    check(`${label}: defaults are stable`, finite(def.l, def.r) && peak(def.l) < 4 && rms(def.l) > 1e-3 && def.state.buses[busId].effect === effect.id, `peak ${peak(def.l).toFixed(2)}, ${db(rms(def.l), rms(ref.l)).toFixed(1)} dB vs dry`);
+    check(`${label}: defaults are stable`, finite(def.l, def.r) && peak(def.l) < 4 && rms(def.l) > 1e-3 && def.state.buses[busId].slots[0]?.effect === effect.id, `peak ${peak(def.l).toFixed(2)}, ${db(rms(def.l), rms(ref.l)).toFixed(1)} dB vs dry`);
 
     for (const pick of ['min', 'max']) {
       const out = await render({ effectId: effect.id, busId, params: extremes(effect, pick) });
