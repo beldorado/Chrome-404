@@ -258,6 +258,34 @@ async function run() {
     `order ${movedOrder.join(' > ')}, max diff ${maxDiff(original.samples, moved.samples).toFixed(3)}`
   );
 
+  const swapped = await render((engine) => {
+    engine.addSlot('bus1', 'filter-drive', { params: lowPass });
+    const uid = engine.addSlot('bus1', 'filter-drive', { params: highPass });
+    engine.setLfo('bus1', uid, { target: 'mix', shape: 'Square' });
+    engine.swapSlot('bus1', uid, 'equalizer');
+  });
+  const swappedSlot = swapped.engine.state.buses.bus1.slots[1];
+  check(
+    'Swapping an effect keeps its position, on/off and LFO, with the new defaults',
+    swappedSlot.uid === 'fx2' && swappedSlot.effect === 'equalizer' && swappedSlot.enabled && swappedSlot.lfo.target === 'mix' && swappedSlot.lfo.shape === 'Square' && swappedSlot.params.midGain === 0 && maxDiff(swapped.samples, lpfOnly) < 1e-4,
+    `slot ${swappedSlot.uid} ${swappedSlot.effect}, max diff vs LPF alone ${maxDiff(swapped.samples, lpfOnly).toExponential(2)}`
+  );
+
+  const swapToVinyl = await render((engine) => {
+    const uid = engine.addSlot('bus1', 'filter-drive', { params: { mix: 0 } });
+    engine.swapSlot('bus1', uid, 'vinyl-sim');
+    engine.setParam('bus1', uid, 'mix', 0);
+  });
+  const vinylShift = Math.round(0.016 * RATE);
+  const vinylAligned = maxDiff(swapToVinyl.samples.subarray(vinylShift), dry.subarray(0, dry.length - vinylShift));
+  check('Swapping updates latency compensation (Vinyl dry path is delayed)', vinylAligned < 1e-4, `max diff latency-aligned ${vinylAligned.toExponential(2)}`);
+
+  const badSwap = (await render((engine) => {
+    engine.addSlot('input', 'vocoder');
+    engine.swapSlot('input', 0, 'scatter');
+  })).engine.state;
+  check('Swapping to an effect the bus does not allow is refused', badSwap.buses.input.slots[0].effect === 'vocoder', `input slot = ${badSwap.buses.input.slots[0].effect}`);
+
   const full = (await render((engine) => {
     for (let i = 0; i < 12; i++) engine.addSlot('bus1', 'equalizer');
   })).engine.state;

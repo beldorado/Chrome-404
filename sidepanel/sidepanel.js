@@ -153,9 +153,12 @@ function pickBus(busId) {
   $('add-fx').focus();
 }
 
+const ALWAYS_SHOWN = new Set(['input', 'master']);
+
 function renderBuses() {
   editors.clear();
-  $('buses').replaceChildren(...BUS_IDS.map(renderBus));
+  const visible = BUS_IDS.filter((id) => ALWAYS_SHOWN.has(id) || state.buses[id].slots.length > 0);
+  $('buses').replaceChildren(...visible.map(renderBus));
 }
 
 function renderBus(busId) {
@@ -189,28 +192,33 @@ function renderSlot(busId, slot, index, count) {
     dataset: { role: 'toggle' },
     onclick: () => send(MSG.SET_SLOT_ENABLED, { ...ref, enabled: !currentSlot(busId, slot.uid)?.enabled })
   });
-  const name = h(
-    'button',
-    {
-      type: 'button',
-      className: 'slot-name',
-      'aria-expanded': String(open),
-      title: open ? 'Hide controls' : 'Show controls',
-      onclick: () => {
-        if (open) collapsed.add(slot.uid);
-        else collapsed.delete(slot.uid);
-        rerender();
-      }
-    },
-    h('span', { className: 'chevron', textContent: open ? '▾' : '▸' }),
-    effect.name
-  );
+  const fold = h('button', {
+    type: 'button',
+    className: 'slot-fold',
+    'aria-expanded': String(open),
+    title: open ? `Hide ${effect.name} controls` : `Show ${effect.name} controls`,
+    textContent: open ? '▾' : '▸',
+    onclick: () => {
+      if (open) collapsed.add(slot.uid);
+      else collapsed.delete(slot.uid);
+      rerender();
+    }
+  });
+  const swap = h('select', {
+    className: 'slot-effect',
+    title: 'Swap this effect',
+    'aria-label': `Effect in ${BUS_LABELS[busId]}, position ${index + 1}`,
+    onchange: (e) => send(MSG.SWAP_SLOT, { ...ref, effectId: e.target.value })
+  });
+  fillEffectOptions(swap, busId);
+  swap.value = slot.effect;
   const move = (delta, label, glyph, disabled) => h('button', { type: 'button', className: 'slot-tool', title: label, textContent: glyph, disabled, onclick: () => send(MSG.MOVE_SLOT, { ...ref, delta }) });
   const head = h(
     'div',
     { className: 'slot-head' },
     toggle,
-    name,
+    fold,
+    swap,
     move(-1, 'Move earlier in the chain', '↑', index === 0),
     move(1, 'Move later in the chain', '↓', index === count - 1),
     h('button', { type: 'button', className: 'slot-tool', title: `Remove ${effect.name}`, textContent: '✕', onclick: () => send(MSG.REMOVE_SLOT, ref) })
@@ -355,6 +363,7 @@ function updateValues() {
   for (const busId of BUS_IDS) {
     const { slots } = state.buses[busId];
     const busEl = document.querySelector(`.bus[data-bus="${busId}"]`);
+    if (!busEl) continue;
     busEl.classList.toggle('active', slots.some((s) => s.enabled));
     const count = busEl.querySelector('[data-role="count"]');
     count.textContent = slots.length ? `${slots.filter((s) => s.enabled).length}/${slots.length} on` : '';

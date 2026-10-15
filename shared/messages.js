@@ -15,6 +15,7 @@ export const MSG = {
   REMOVE_SOURCE: 'remove-source',
   UPDATE_SOURCE: 'update-source',
   ADD_SLOT: 'add-slot',
+  SWAP_SLOT: 'swap-slot',
   REMOVE_SLOT: 'remove-slot',
   MOVE_SLOT: 'move-slot',
   SET_SLOT_ENABLED: 'set-slot-enabled',

@@ -153,6 +153,16 @@ export class AudioEngine {
     return uid;
   }
 
+  swapSlot(busId, ref, effectId) {
+    const slot = this.resolveSlot(busId, ref);
+    if (!slot || slot.effect === effectId || !isAvailable(effectId, busId)) return;
+    const params = defaultParams(effectId);
+    this.buses[busId].slot(slot.uid).setEffect(effectId, params, { bpm: this.state.bpm });
+    const target = this.validTarget(effectId, slot.lfo?.target);
+    Object.assign(slot, { effect: effectId, params, lfo: { ...defaultLfo(), ...slot.lfo, target } });
+    this.emit();
+  }
+
   removeSlot(busId, ref) {
     const slot = this.resolveSlot(busId, ref);
     if (!slot) return;

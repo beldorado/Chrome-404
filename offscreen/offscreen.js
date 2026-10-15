@@ -38,6 +38,7 @@ const handlers = {
   [MSG.REMOVE_SOURCE]: ({ sourceId }) => engine.removeSource(sourceId),
   [MSG.UPDATE_SOURCE]: ({ sourceId, changes }) => engine.updateSource(sourceId, changes),
   [MSG.ADD_SLOT]: ({ busId, effectId }) => engine.addSlot(busId, effectId),
+  [MSG.SWAP_SLOT]: ({ busId, slot, effectId }) => engine.swapSlot(busId, slot, effectId),
   [MSG.REMOVE_SLOT]: ({ busId, slot }) => engine.removeSlot(busId, slot),
   [MSG.MOVE_SLOT]: ({ busId, slot, delta }) => engine.moveSlot(busId, slot, delta),
   [MSG.SET_SLOT_ENABLED]: ({ busId, slot, enabled }) => engine.setSlotEnabled(busId, slot, enabled),

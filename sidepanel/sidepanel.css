@@ -352,26 +352,23 @@ select {
   gap: 6px;
 }
 
-.slot-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 2px;
+.slot-fold {
+  flex: none;
+  width: 18px;
+  height: 24px;
+  padding: 0;
   background: none;
   border: 0;
-  text-align: left;
-  font-weight: 600;
+  color: var(--dim);
   cursor: pointer;
 }
 
-.slot:not(.active) .slot-name {
-  color: var(--dim);
+.slot-effect {
+  flex: 1;
+  font-weight: 600;
 }
 
-.chevron {
-  width: 10px;
+.slot:not(.active) .slot-effect {
   color: var(--dim);
 }
 
