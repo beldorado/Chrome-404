@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Chrome-404</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <p class="note">New tab not in Sources? Click the Chrome-404 icon again on that tab (or press Alt+Shift+4).</p>
+
+  <header class="deck">
+    <div class="screen">
+      <div class="screen-top">
+        <span class="wordmark">Chrome-404</span>
+        <span id="detected" class="detected" title="Tempo heard in the captured audio, with confidence">Heard —</span>
+      </div>
+      <label class="tempo">
+        <input id="bpm" type="number" min="40" max="240" step="0.1" aria-label="Tempo in BPM">
+        <span>BPM</span>
+      </label>
+      <div class="meter" title="Output level"><div class="meter-fill" id="meter"></div></div>
+    </div>
+
+    <div class="transport">
+      <button id="tap" type="button" class="key">Tap</button>
+      <button id="half" type="button" class="key" title="Half tempo">½</button>
+      <button id="double" type="button" class="key" title="Double tempo">×2</button>
+      <button id="auto" type="button" class="key" title="Follow the tempo heard in the audio">Auto</button>
+      <button id="learn" type="button" class="key key-rec" title="Click a control, then move a knob on your MIDI controller">MIDI learn</button>
+    </div>
+
+    <select id="preset" aria-label="Load a preset"></select>
+  </header>
+
+  <div id="status" class="status" hidden></div>
+
+  <section class="plate sources-plate">
+    <h2>Sources</h2>
+    <p class="hint" id="sources-empty">Click the Chrome-404 icon (or press Alt+Shift+4) on a tab that's playing audio.</p>
+    <ul id="sources" class="sources"></ul>
+    <div id="pending" hidden>
+      <p class="hint">Playing but not captured yet. Chrome needs you to click the Chrome-404 icon on each tab once (or press Alt+Shift+4, or right-click and choose Capture this tab):</p>
+      <ul id="pending-list" class="sources"></ul>
+    </div>
+  </section>
+
+  <section id="buses"></section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
