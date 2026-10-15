@@ -500,6 +500,54 @@ input[type="range"]:focus-visible {
   border-top: 1px solid var(--edge);
 }
 
+.lfo.off .param:not(.lfo-head) {
+  opacity: 0.45;
+}
+
+.lfo-power {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.lfo-toggle {
+  width: 34px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #141517;
+  border-radius: 9px;
+  background: var(--recess);
+  cursor: pointer;
+  position: relative;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.lfo-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.lfo-toggle.on {
+  background: color-mix(in srgb, var(--pad) 35%, var(--recess));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--pad) 45%, transparent);
+}
+
+.lfo-toggle.on::after {
+  transform: translateX(16px);
+  background: var(--pad);
+}
+
+.lfo-toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 body.learning .param,
 body.learning .knob {
   outline: 1px dashed var(--hot);

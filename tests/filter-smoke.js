@@ -199,6 +199,29 @@ async function run() {
   const free = await render(lfoOn('Sine', { sync: 'Free', rate: 2 }), {}, { seconds: 2, modulate: true });
   check('LFO free-running at 2 Hz modulates too', swing(free.samples) > 10, `window swing ${swing(free.samples).toFixed(1)} dB`);
 
+  const lfoOff = await render((engine) => {
+    lfoOn('Square')(engine);
+    engine.setLfo('bus1', 0, { enabled: false });
+  }, {}, { seconds: 2, modulate: true });
+  const offLfo = slot0(lfoOff.engine.state, 'bus1').lfo;
+  check('LFO switched off stops modulating but keeps its target', swing(lfoOff.samples) < 3 && offLfo.enabled === false && offLfo.target === 'cutoff', `window swing ${swing(lfoOff.samples).toFixed(1)} dB, target ${offLfo.target}`);
+
+  const lfoBack = await render((engine) => {
+    lfoOn('Square')(engine);
+    engine.setLfo('bus1', 0, { enabled: false });
+    engine.setLfo('bus1', 0, { enabled: true });
+  }, {}, { seconds: 2, modulate: true });
+  check('LFO switched back on resumes the sweep', swing(lfoBack.samples) > 20, `window swing ${swing(lfoBack.samples).toFixed(1)} dB`);
+
+  const offTrip = await render((engine) => {
+    const source = new AudioEngine(new OfflineAudioContext(2, RATE, RATE));
+    source.addSlot('bus1', 'filter-drive');
+    source.setLfo('bus1', 0, { target: 'cutoff', enabled: false });
+    engine.applySettings(JSON.parse(JSON.stringify(source.settings())));
+  });
+  const offTripLfo = slot0(offTrip.engine.state, 'bus1').lfo;
+  check('LFO off state survives save/restore', offTripLfo.enabled === false && offTripLfo.target === 'cutoff', JSON.stringify(offTripLfo));
+
   const sanitized = (await render((engine) => {
     filter('bus1', {})(engine);
     engine.setLfo('bus1', 0, { target: 'type', depth: 7, shape: 'Nope' });

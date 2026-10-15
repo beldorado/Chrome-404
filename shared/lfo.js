@@ -10,7 +10,7 @@ export const LFO_PARAMS = [
 ];
 
 export function defaultLfo() {
-  return { target: null, ...Object.fromEntries(LFO_PARAMS.map((p) => [p.id, p.default])) };
+  return { target: null, enabled: true, ...Object.fromEntries(LFO_PARAMS.map((p) => [p.id, p.default])) };
 }
 
 export function isModulatable(param) {

@@ -238,11 +238,12 @@ export class AudioEngine {
     for (const def of LFO_PARAMS) {
       if (def.id in changes) lfo[def.id] = sanitizeParam(def, changes[def.id]);
     }
-    if ('target' in changes) {
-      const previous = lfo.target;
-      lfo.target = this.validTarget(slot.effect, changes.target);
-      if (previous && previous !== lfo.target) this.buses[busId].slot(slot.uid).setParam(previous, slot.params[previous]);
-    }
+    const wasModulating = lfo.enabled && lfo.target;
+    const previous = lfo.target;
+    if ('enabled' in changes) lfo.enabled = Boolean(changes.enabled);
+    if ('target' in changes) lfo.target = this.validTarget(slot.effect, changes.target);
+    const stillModulating = lfo.enabled && lfo.target === previous;
+    if (wasModulating && !stillModulating) this.buses[busId].slot(slot.uid).setParam(previous, slot.params[previous]);
     slot.lfo = lfo;
     this.emit();
   }
@@ -253,7 +254,7 @@ export class AudioEngine {
     for (const busId of BUS_IDS) {
       for (const slot of this.state.buses[busId].slots) {
         const { lfo, params } = slot;
-        if (!lfo?.target) continue;
+        if (!lfo?.enabled || !lfo.target) continue;
         const def = getEffect(slot.effect).params.find((p) => p.id === lfo.target);
         const osc = this.lfos.get(slot.uid);
         if (!def || !osc) continue;

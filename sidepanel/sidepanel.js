@@ -272,7 +272,13 @@ function renderLfo(busId, slot, effect) {
     ...effect.params.filter(isModulatable).map((p) => h('option', { value: p.id, textContent: p.name }))
   );
   target.value = slot.lfo?.target ?? '';
-  const rows = [h('div', { className: 'param lfo-head' }, h('label', { textContent: 'LFO' }), target, h('output'))];
+  const power = h('button', {
+    type: 'button',
+    className: 'lfo-toggle',
+    dataset: { role: 'lfo-toggle' },
+    onclick: () => setLfo({ enabled: !currentSlot(busId, slot.uid)?.lfo.enabled })
+  });
+  const rows = [h('div', { className: 'param lfo-head' }, h('label', { textContent: 'LFO' }), target, h('div', { className: 'lfo-power' }, power))];
   if (slot.lfo?.target) {
     for (const param of LFO_PARAMS) {
       if (param.id === 'rate' && slot.lfo.sync !== 'Free') continue;
@@ -384,11 +390,21 @@ function updateValues() {
         const row = el.querySelector(`.param[data-param="${param.id}"]`);
         if (!row) continue;
         updateRow(row, param, slot.params[param.id]);
-        row.classList.toggle('modulated', slot.lfo?.target === param.id);
+        row.classList.toggle('modulated', Boolean(slot.lfo?.enabled) && slot.lfo?.target === param.id);
       }
       for (const param of LFO_PARAMS) {
         const row = el.querySelector(`.param[data-lfo="${param.id}"]`);
         if (row) updateRow(row, param, slot.lfo[param.id]);
+      }
+      const power = el.querySelector('[data-role="lfo-toggle"]');
+      if (power) {
+        const lfoOn = Boolean(slot.lfo?.enabled);
+        power.classList.toggle('on', lfoOn);
+        power.setAttribute('aria-pressed', String(lfoOn));
+        power.disabled = !slot.lfo?.target;
+        power.title = slot.lfo?.target ? `LFO ${lfoOn ? 'on' : 'off'}` : 'Pick an LFO target first';
+        power.setAttribute('aria-label', power.title);
+        el.querySelector('.lfo').classList.toggle('off', !lfoOn);
       }
       editors.get(slot.uid)?.update(slot.params);
     }
