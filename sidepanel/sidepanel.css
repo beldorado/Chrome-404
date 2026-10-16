@@ -1299,6 +1299,11 @@ body.learning .pad {
   opacity: 0.6;
 }
 
+.pad-wave .wave-peak,
+.pad.playing .pad-wave .wave-peak {
+  opacity: 0.3;
+}
+
 .bank.tick .pad.playing {
   animation: pulse 160ms ease-out;
 }
@@ -1680,7 +1685,7 @@ body.learning .pad {
 
 .editor-head {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   gap: 8px;
   align-items: center;
 }
