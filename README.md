@@ -4,8 +4,9 @@ SP-404 MK2-style effect buses, pads and resampling for any tab's audio. A Chrome
 
 ## Install
 
-1. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and pick this folder.
-2. On a tab that's playing audio, click the Chrome-404 icon (or press Alt+Shift+4). The side panel opens and the tab's audio runs through the engine.
+1. Clone this repo (`git clone https://github.com/beldorado/Chrome-404.git`), or download it as a ZIP from GitHub and unzip it.
+2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and pick the `Chrome-404` folder.
+3. On a tab that's playing audio, click the Chrome-404 icon (or press Alt+Shift+4). The side panel opens and the tab's audio runs through the engine.
 
 ## Perform view
 
@@ -73,3 +74,7 @@ The end-to-end suite loads the unpacked extension and drives the side panel. It 
 ```sh
 PW_CORE=<path to playwright-core> node tests/run-extension.cjs [screenshot-dir]
 ```
+
+## License
+
+[MIT](LICENSE)
