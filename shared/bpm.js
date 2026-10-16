@@ -93,3 +93,33 @@ export function estimateTempo(onsets, frameRate, { minBpm = 60, maxBpm = 200, ce
     confidence: clamp(acf[best] / acf[0], 0, 1)
   };
 }
+
+const PHASE_BINS = 64;
+const PHASE_KERNEL = [1, 2, 3, 2, 1];
+
+export function beatPhase(onsets, times, bpm) {
+  const n = Math.min(onsets.length, times.length);
+  if (!n || !(bpm > 0)) return null;
+  const period = 60 / bpm;
+  const bins = new Float64Array(PHASE_BINS);
+  let total = 0;
+  for (let j = 0; j < n; j++) {
+    const p = (((times[j] % period) + period) % period) / period;
+    bins[Math.floor(p * PHASE_BINS) % PHASE_BINS] += onsets[j];
+    total += onsets[j];
+  }
+  if (total <= 0) return null;
+  const half = (PHASE_KERNEL.length - 1) / 2;
+  const smooth = bins.map((_, i) => PHASE_KERNEL.reduce((sum, w, k) => sum + w * bins[(i + k - half + PHASE_BINS) % PHASE_BINS], 0));
+  let best = 0;
+  for (let i = 1; i < PHASE_BINS; i++) if (smooth[i] > smooth[best]) best = i;
+  const a = smooth[(best - 1 + PHASE_BINS) % PHASE_BINS];
+  const b = smooth[best];
+  const c = smooth[(best + 1) % PHASE_BINS];
+  const d = a - 2 * b + c;
+  const offset = d < 0 ? (0.5 * (a - c)) / d : 0;
+  const phase = (((best + 0.5 + offset) / PHASE_BINS) % 1) * period;
+  const last = times[n - 1];
+  const mean = smooth.reduce((x, y) => x + y, 0) / PHASE_BINS;
+  return { beat: last - ((((last - phase) % period) + period) % period), strength: b / Math.max(1e-9, mean) };
+}

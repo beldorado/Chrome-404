@@ -32,6 +32,27 @@ async function detectFromAudio(bpm, pattern, { seconds = 14, silent = false } = 
   return engine.state;
 }
 
+async function phaseFromAudio(bpm, pattern, offset, seconds = 14) {
+  const ctx = new OfflineAudioContext(2, seconds * RATE, RATE);
+  const engine = new AudioEngine(ctx);
+  await engine.startTempoDetection();
+  engine.setAutoBpm(true);
+  const source = ctx.createBufferSource();
+  source.buffer = drumLoop(ctx, bpm, seconds, pattern);
+  engine.addSource(source, { id: 'loop', kind: 'test', label: 'loop' });
+  source.start(offset);
+  await ctx.startRendering();
+  await new Promise((r) => setTimeout(r, 400));
+  const period = 60 / bpm;
+  const circular = (t) => {
+    const x = ((((t - offset) % period) + period) % period) / period;
+    return Math.min(x, 1 - x) * period;
+  };
+  const late = 12;
+  const gridError = Math.abs(engine.beat(offset + late * period) - Math.round(engine.beat(offset + late * period))) * (60 / engine.state.bpm);
+  return { detected: engine.state.detected, heardError: engine.state.detected?.beat == null ? Infinity : circular(engine.state.detected.beat), gridError };
+}
+
 const matches = (found, target, tolerance) =>
   [target, target / 2, target * 2].some((t) => Math.abs(found - t) <= tolerance);
 
@@ -63,6 +84,16 @@ async function run() {
       found !== undefined && Math.abs(found - bpm) <= 1 && Math.abs(state.bpm - bpm) <= 1,
       state.detected ? `detected ${found} (conf ${state.detected.confidence}), engine bpm ${state.bpm}` : 'no estimate'
     );
+  }
+
+  for (const [bpm, pattern, label, offset] of [
+    [97, BOOM_BAP, 'boom-bap', 0.23],
+    [124, FOUR_ON_FLOOR, 'four-on-the-floor', 0.31],
+    [90, BOOM_BAP, 'boom-bap', 0.47]
+  ]) {
+    const { heardError, gridError } = await phaseFromAudio(bpm, pattern, offset);
+    check(`Phase: ${bpm} BPM ${label} starting at ${offset} s, beats found within 15 ms`, heardError <= 0.015, `${(heardError * 1000).toFixed(1)} ms off`);
+    check(`Phase: AUTO locks the grid to those beats (${bpm} BPM)`, gridError <= 0.015, `grid ${(gridError * 1000).toFixed(1)} ms off the beat`);
   }
 
   const silent = await detectFromAudio(120, FOUR_ON_FLOOR, { silent: true });

@@ -59,6 +59,10 @@ export class Bus {
     this.slots.forEach((slot) => slot.setTempo(bpm));
   }
 
+  setGrid(origin) {
+    this.slots.forEach((slot) => slot.setGrid(origin));
+  }
+
   meters() {
     const readings = {};
     for (const slot of this.slots) {

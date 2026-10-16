@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Chrome-404",
-  "version": "0.2.0",
-  "description": "Sampler-style FX buses for any tab's audio.",
+  "version": "0.3.0",
+  "description": "SP-404-style FX buses, pads and resampling for any tab's audio.",
   "minimum_chrome_version": "116",
   "permissions": ["tabCapture", "offscreen", "sidePanel", "storage", "activeTab", "tabs", "contextMenus"],
   "background": {

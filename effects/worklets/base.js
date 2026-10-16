@@ -16,9 +16,14 @@ export class EffectProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.params = { ...(options.processorOptions?.params ?? {}) };
+    this.originFrame = (options.processorOptions?.origin ?? 0) * sampleRate;
     this.bpm = 90;
     this.active = false;
     this.port.onmessage = ({ data }) => {
+      if (data.type === 'grid') {
+        this.originFrame = data.origin * sampleRate;
+        return;
+      }
       if (data.type !== 'param') return;
       this.params[data.id] = data.value;
       this.onParam?.(data.id, data.value);
@@ -27,6 +32,10 @@ export class EffectProcessor extends AudioWorkletProcessor {
 
   samplesPerBeat() {
     return (sampleRate * 60) / this.bpm;
+  }
+
+  gridFrames(offset = 0) {
+    return currentFrame + offset - this.originFrame;
   }
 
   process(inputs, outputs, parameters) {
@@ -83,4 +92,8 @@ export function hash(a, b) {
   let h = (a * 374761393 + b * 668265263) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff;
+}
+
+export function mod(x, m) {
+  return ((x % m) + m) % m;
 }

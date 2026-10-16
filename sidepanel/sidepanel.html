@@ -5,52 +5,86 @@
   <title>Chrome-404</title>
   <link rel="stylesheet" href="sidepanel.css">
 </head>
-<body>
-  <p class="note">New tab not in Sources? Click the Chrome-404 icon again on that tab (or press Alt+Shift+4).</p>
-
+<body data-view="perform">
   <header class="deck">
     <div class="screen">
       <div class="screen-top">
         <span class="wordmark">Chrome-404</span>
         <span id="detected" class="detected" title="Tempo heard in the captured audio, with confidence">Heard —</span>
       </div>
-      <label class="tempo">
-        <input id="bpm" type="number" min="40" max="240" step="0.1" aria-label="Tempo in BPM">
-        <span>BPM</span>
-      </label>
+      <div class="screen-main">
+        <label class="tempo">
+          <input id="bpm" type="number" min="40" max="240" step="0.1" aria-label="Tempo in BPM">
+          <span>BPM</span>
+        </label>
+        <div class="clock" title="Bar and beat">
+          <div class="beats" id="beats" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <output id="position" aria-label="Bar and beat">–.–</output>
+        </div>
+      </div>
+      <div class="readout" id="readout">
+        <span id="readout-name"></span>
+        <span id="readout-value"></span>
+      </div>
       <div class="meter" title="Output level"><div class="meter-fill" id="meter"></div></div>
     </div>
 
     <div class="transport">
-      <button id="tap" type="button" class="key">Tap</button>
+      <button id="tap" type="button" class="key" title="Tap on the beat (Space). Your first tap marks beat 1 of the bar.">Tap</button>
       <button id="half" type="button" class="key" title="Half tempo">½</button>
       <button id="double" type="button" class="key" title="Double tempo">×2</button>
       <button id="auto" type="button" class="key" title="Follow the tempo heard in the audio">Auto</button>
-      <button id="learn" type="button" class="key key-rec" title="Click a control, then move a knob on your MIDI controller">MIDI learn</button>
+      <button id="quantize" type="button" class="key key-q" title="Quantize: glitch effects and loops start on this grid, recordings start on the bar. Click to change.">Q 1/16</button>
+      <button id="learn" type="button" class="key key-rec" title="Click a knob, button or pad, then move a knob or hit a pad on your MIDI controller">MIDI learn</button>
     </div>
 
-    <select id="preset" aria-label="Load a preset"></select>
+    <div class="deck-row">
+      <div class="views" role="tablist" aria-label="View">
+        <button id="view-perform" type="button" role="tab" aria-controls="perform">Perform</button>
+        <button id="view-edit" type="button" role="tab" aria-controls="edit">Edit</button>
+      </div>
+      <select id="preset" aria-label="Load a preset"></select>
+      <button id="save-preset" type="button" class="key" aria-controls="preset-form" title="Save the current FX setup as a preset">Save</button>
+    </div>
+    <form id="preset-form" class="preset-form" aria-label="Save preset" hidden></form>
   </header>
 
-  <div id="status" class="status" hidden></div>
+  <div id="status" class="status" role="status" hidden></div>
 
-  <section class="plate sources-plate">
-    <h2>Sources</h2>
+  <main id="perform" class="perform" role="tabpanel" aria-labelledby="view-perform"></main>
+
+  <section class="plate sources-plate" aria-labelledby="sources-title">
+    <h2 id="sources-title">Sources</h2>
     <p class="hint" id="sources-empty">Click the Chrome-404 icon (or press Alt+Shift+4) on a tab that's playing audio.</p>
     <ul id="sources" class="sources"></ul>
+    <div id="xfader-row" class="xfader-row" hidden>
+      <span aria-hidden="true">A</span>
+      <input id="xfader" type="range" min="-1" max="1" step="0.01" aria-label="Crossfader between sources marked A and B" title="Double-click to centre">
+      <span aria-hidden="true">B</span>
+    </div>
     <div id="pending" hidden>
       <p class="hint">Playing but not captured yet. Chrome needs you to click the Chrome-404 icon on each tab once (or press Alt+Shift+4, or right-click and choose Capture this tab):</p>
       <ul id="pending-list" class="sources"></ul>
     </div>
   </section>
 
-  <section id="add-bar" class="add-bar" aria-label="Add an effect">
-    <select id="add-bus" aria-label="Bus"></select>
-    <select id="add-fx" aria-label="Effect"></select>
-    <button id="add-go" type="button" class="key add-go" title="Add this effect to the end of the bus chain">+ Add</button>
-  </section>
+  <div id="edit" class="edit" role="tabpanel" aria-labelledby="view-edit">
+    <section class="routing" aria-label="Bus routing">
+      <span>Bus routing</span>
+      <div id="routing" class="seg" role="radiogroup" aria-label="Bus routing"></div>
+      <p id="routing-hint" class="hint"></p>
+    </section>
 
-  <section id="buses"></section>
+    <section id="add-bar" class="add-bar" aria-label="Add an effect">
+      <select id="add-bus" aria-label="Bus"></select>
+      <select id="add-fx" aria-label="Effect"></select>
+      <button id="add-go" type="button" class="key add-go" title="Add this effect to the end of the bus chain">+ Add</button>
+    </section>
+
+    <section id="buses"></section>
+  </div>
+
+  <p class="note">New tab not in Sources? Click the Chrome-404 icon again on that tab (or press Alt+Shift+4). Keys: 1–6 bus effects, Q–R, A–F and Z–V pads, Ctrl+click pads to select several, Shift+click to select one without playing, drag a pad onto another to move or copy it, B switch bank, Space tap, T record, G chop while editing, Esc stop pads.</p>
 
   <script type="module" src="sidepanel.js"></script>
 </body>

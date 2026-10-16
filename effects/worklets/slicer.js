@@ -1,4 +1,4 @@
-import { EffectProcessor } from './base.js';
+import { EffectProcessor, mod } from './base.js';
 import { divisionBeats } from '../../shared/sync.js';
 
 const PATTERNS = {
@@ -15,12 +15,11 @@ const PATTERNS = {
 class SlicerProcessor extends EffectProcessor {
   constructor(options) {
     super(options);
-    this.clock = 0;
     this.gain = 1;
   }
 
-  onActive() {
-    this.clock = 0;
+  onActive(on) {
+    if (on) this.gain = 1;
   }
 
   render(inL, inR, outL, outR, n) {
@@ -28,19 +27,19 @@ class SlicerProcessor extends EffectProcessor {
     const pattern = PATTERNS[this.params.pattern] ?? PATTERNS[1];
     const floor = 1 - this.params.depth;
     const coeff = 1 - Math.exp(-1 / (Math.max(0.5, this.params.shape) * 0.001 * sampleRate));
+    const start = this.gridFrames();
     for (let i = 0; i < n; i++) {
       if (!this.active) {
         outL[i] = inL[i];
         outR[i] = inR[i];
         continue;
       }
-      const step = Math.floor(this.clock / stepLen) % 16;
+      const step = mod(Math.floor((start + i) / stepLen), 16);
       const open = (pattern >> (15 - step)) & 1;
       const target = open ? 1 : floor;
       this.gain += (target - this.gain) * coeff;
       outL[i] = inL[i] * this.gain;
       outR[i] = inR[i] * this.gain;
-      this.clock++;
     }
   }
 }

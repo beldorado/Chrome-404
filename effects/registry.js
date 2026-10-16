@@ -57,6 +57,55 @@ const IMPLEMENTED = [
 
 const EFFECTS = new Map(IMPLEMENTED.map((effect) => [effect.id, effect]));
 
+export const CTRL_COUNT = 3;
+
+const CTRL = {
+  'filter-drive': ['cutoff', 'resonance', 'drive'],
+  isolator: ['low', 'mid', 'high'],
+  'super-filter': ['cutoff', 'resonance', 'lfoDepth'],
+  equalizer: ['lowGain', 'midGain', 'highGain'],
+  'vinyl-sim': ['noise', 'wow', 'tone'],
+  'cassette-sim': ['tone', 'wow', 'hiss'],
+  lofi: ['rate', 'bits', 'tone'],
+  'bit-crusher': ['bits', 'rate', 'mix'],
+  compressor: ['threshold', 'ratio', 'makeup'],
+  limiter: ['gain', 'ceiling', 'release'],
+  delay: ['time', 'feedback', 'mix'],
+  'tape-echo': ['time', 'feedback', 'mix'],
+  reverb: ['time', 'tone', 'mix'],
+  chorus: ['rate', 'depth', 'mix'],
+  flanger: ['rate', 'depth', 'feedback'],
+  phaser: ['rate', 'depth', 'resonance'],
+  scatter: ['type', 'depth', 'mix'],
+  stopper: ['division', 'length', 'mix'],
+  looper: ['length', 'speed', 'reverse'],
+  slicer: ['pattern', 'division', 'depth'],
+  downer: ['division', 'depth', 'length'],
+  'grain-cloud': ['size', 'density', 'pitch'],
+  resonator: ['note', 'chord', 'decay'],
+  'auto-pitch': ['key', 'scale', 'amount'],
+  vocoder: ['note', 'chord', 'formant'],
+  'amp-sim': ['gain', 'bass', 'treble']
+};
+
+const QUANTIZED = new Set(['scatter', 'stopper', 'looper', 'slicer', 'downer']);
+
+export function ctrlParams(id) {
+  const effect = EFFECTS.get(id);
+  if (!effect) return [];
+  const byId = new Map(effect.params.map((p) => [p.id, p]));
+  const picked = (CTRL[id] ?? []).map((pid) => byId.get(pid)).filter(Boolean);
+  for (const p of effect.params) {
+    if (picked.length >= CTRL_COUNT) break;
+    if (!picked.includes(p)) picked.push(p);
+  }
+  return picked;
+}
+
+export function isQuantized(id) {
+  return QUANTIZED.has(id);
+}
+
 export function allEffects() {
   return IMPLEMENTED;
 }

@@ -1,4 +1,4 @@
-import { EffectProcessor, RingBuffer, hash } from './base.js';
+import { EffectProcessor, RingBuffer, hash, mod } from './base.js';
 
 const PATTERNS = {
   1: 'NNNNNNNNNNNNRRRR',
@@ -10,6 +10,7 @@ const PATTERNS = {
   7: 'NSNSNRNVNSNSNRNV',
   8: 'NNNNNNNNVVVVVVVV'
 };
+const STEPS = 16;
 const FADE = 96;
 
 class ScatterProcessor extends EffectProcessor {
@@ -20,7 +21,7 @@ class ScatterProcessor extends EffectProcessor {
   }
 
   reset() {
-    this.step = -1;
+    this.step = null;
     this.pos = 0;
     this.stepLen = 0;
     this.action = 'N';
@@ -36,19 +37,20 @@ class ScatterProcessor extends EffectProcessor {
 
   actionFor(step) {
     const pattern = PATTERNS[this.params.type] ?? PATTERNS[1];
-    const symbol = pattern[step % 16];
+    const index = mod(step, STEPS);
+    const symbol = pattern[index];
     if (symbol === 'N') return 'N';
-    return hash(Math.floor(step / 16), step % 16) < this.params.depth ? symbol : 'N';
+    return hash(Math.floor(step / STEPS), index) < this.params.depth ? symbol : 'N';
   }
 
-  beginStep() {
-    this.step++;
-    this.pos = 0;
-    this.stepLen = Math.max(FADE * 2 + 1, Math.round(this.samplesPerBeat() / 4));
-    this.prevAction = this.action;
-    this.action = this.actionFor(this.step);
-    this.nextAction = this.actionFor(this.step + 1);
-    this.stepStart = this.ring.write;
+  beginStep(step, pos) {
+    const continuous = this.step !== null && step === this.step + 1;
+    this.step = step;
+    this.pos = pos;
+    this.prevAction = continuous ? this.action : 'N';
+    this.action = this.actionFor(step);
+    this.nextAction = this.actionFor(step + 1);
+    this.stepStart = this.ring.write - pos;
     if (this.action === 'R' && this.prevAction !== 'R') this.repeatStart = this.stepStart - this.stepLen;
   }
 
@@ -79,6 +81,8 @@ class ScatterProcessor extends EffectProcessor {
   }
 
   render(inL, inR, outL, outR, n) {
+    this.stepLen = Math.max(FADE * 2 + 1, this.samplesPerBeat() / 4);
+    const start = this.gridFrames();
     for (let i = 0; i < n; i++) {
       this.ring.push(inL[i], inR[i]);
       if (!this.active) {
@@ -86,7 +90,9 @@ class ScatterProcessor extends EffectProcessor {
         outR[i] = inR[i];
         continue;
       }
-      if (this.step < 0 || this.pos >= this.stepLen) this.beginStep();
+      const frame = Math.floor(start + i);
+      const step = Math.floor(frame / this.stepLen);
+      if (step !== this.step) this.beginStep(step, Math.floor(frame - step * this.stepLen));
       const replaced = this.read(this.action, this.pos);
       const l = replaced ? this.l : inL[i];
       const r = replaced ? this.r : inR[i];

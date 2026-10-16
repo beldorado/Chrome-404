@@ -30,12 +30,12 @@ class OnsetProcessor extends AudioWorkletProcessor {
       const high = x - this.low;
       this.lowEnergy += this.low * this.low;
       this.highEnergy += high * high;
-      if (++this.count === this.hop) this.frame();
+      if (++this.count === this.hop) this.frame(currentTime + (i + 1) / sampleRate);
     }
     return true;
   }
 
-  frame() {
+  frame(time) {
     const low = Math.log1p((COMPRESSION * this.lowEnergy) / this.hop);
     const high = Math.log1p((COMPRESSION * this.highEnergy) / this.hop);
     this.onsets[this.filled++] = Math.max(0, low - this.prevLow) + Math.max(0, high - this.prevHigh);
@@ -46,7 +46,7 @@ class OnsetProcessor extends AudioWorkletProcessor {
     this.lowEnergy = 0;
     this.highEnergy = 0;
     if (this.filled === BATCH) {
-      this.port.postMessage({ onsets: this.onsets.slice(), energy: this.batchEnergy / BATCH });
+      this.port.postMessage({ onsets: this.onsets.slice(), energy: this.batchEnergy / BATCH, time });
       this.filled = 0;
       this.batchEnergy = 0;
     }

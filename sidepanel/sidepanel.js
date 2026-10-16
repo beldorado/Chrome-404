@@ -1,28 +1,42 @@
 import { MSG, TARGET } from '../shared/messages.js';
-import { BUS_IDS, BUS_LABELS, DEFAULT_MASTER, MAX_SLOTS, ROUTES, ROUTE_LABELS } from '../shared/state.js';
-import { getEffect, listEffects } from '../effects/registry.js';
+import { BUS_IDS, BUS_LABELS, BUS_ROUTINGS, DECK_SIDES, DEFAULT_MASTER, MAX_SLOTS, SOURCE_LEVEL_MAX } from '../shared/state.js';
+import { getEffect } from '../effects/registry.js';
 import { clamp, formatValue, fromNormalized, toNormalized } from '../shared/params.js';
 import { TapTempo } from '../shared/tempo.js';
-import { PRESETS } from '../engine/presets.js';
+import { BEATS_PER_BAR, QUANTIZE_OPTIONS, position } from '../shared/grid.js';
+import { createPresets } from './presets.js';
 import { MidiLearn } from './midi.js';
+import { FocusModality, HoldKeys } from './keys.js';
 import { h } from './dom.js';
 import { EDITORS } from './editors/index.js';
 import { LFO_PARAMS, isModulatable } from '../shared/lfo.js';
+import { busLit, createPerform } from './perform.js';
+import { fillEffectOptions, routeSelect, setFill } from './widgets.js';
 
 const SLIDER_STEPS = 1000;
 const AUTO_CONFIDENT = 0.2;
 const GR_RANGE_DB = 24;
 const MASTER_MAX = 1.5;
+const READOUT_MS = 1600;
+const VIEWS = ['perform', 'edit'];
+const ROUTING_HINTS = {
+  Parallel: 'Bus 1 and Bus 2 each feed Bus 3, then Bus 4.',
+  Series: 'Bus 1 → Bus 2 → Bus 3 → Bus 4. Sources sent to Bus 2 skip Bus 1.'
+};
 const $ = (id) => document.getElementById(id);
 
 let state = null;
 let structureKey = '';
 let pointerDown = false;
 let pending = [];
+let readoutTimer = null;
 const editors = new Map();
 const collapsed = new Set();
 const tapTempo = new TapTempo();
-const midi = new MidiLearn({ onControl: handleMidi, onStatus: showStatus });
+const midi = new MidiLearn({ onControl: handleMidi, onButton: handleMidiButton, onStatus: showStatus });
+const perform = createPerform({ root: $('perform'), send, getState: () => state, flash, armLearn, showStatus });
+const focusModality = new FocusModality();
+const keys = new HoldKeys({ press: pressAction, release: releaseAction, keyboardFocused: (el) => focusModality.has(el) });
 
 function showStatus(message, kind = 'error') {
   const el = $('status');
@@ -43,11 +57,15 @@ async function send(type, payload = {}) {
   }
 }
 
+function busy(next) {
+  return next.sources.length > 0 || next.recording !== null || next.pads.some((p) => p.playing);
+}
+
 function setState(next) {
   if (!next) return;
   state = next;
   const key = JSON.stringify([
-    next.sources,
+    next.sources.map((s) => [s.id, s.label, s.route, s.inputFx]),
     next.inputRoute,
     BUS_IDS.map((id) => next.buses[id].slots.map((s) => [s.uid, s.effect, s.lfo?.target, s.lfo?.sync === 'Free', collapsed.has(s.uid)]))
   ]);
@@ -58,7 +76,9 @@ function setState(next) {
     renderBuses();
   }
   updateValues();
+  perform.sync(next);
   if (!next.sources.length) updateMeter({ peak: 0 });
+  if (!busy(next)) updateTransport(null);
 }
 
 function rerender() {
@@ -66,10 +86,40 @@ function rerender() {
   setState(state);
 }
 
-function routeSelect(value, onchange) {
-  const select = h('select', { onchange: (e) => onchange(e.target.value) }, ...ROUTES.map((r) => h('option', { value: r, textContent: ROUTE_LABELS[r] })));
-  select.value = value;
-  return select;
+function flash(name, value) {
+  $('readout-name').textContent = name;
+  $('readout-value').textContent = value;
+  $('readout').classList.add('touched');
+  clearTimeout(readoutTimer);
+  readoutTimer = setTimeout(() => {
+    readoutTimer = null;
+    idleReadout();
+  }, READOUT_MS);
+}
+
+function idleReadout() {
+  if (readoutTimer || !state) return;
+  $('readout').classList.remove('touched');
+  const { bus, effect } = perform.describeSelected(state);
+  $('readout-name').textContent = bus;
+  $('readout-value').textContent = effect;
+}
+
+function setView(view) {
+  const next = VIEWS.includes(view) ? view : 'perform';
+  document.body.dataset.view = next;
+  localStorage.setItem('view', next);
+  for (const id of VIEWS) {
+    const tab = $(`view-${id}`);
+    tab.setAttribute('aria-selected', String(id === next));
+    tab.tabIndex = id === next ? 0 : -1;
+  }
+  $('perform').hidden = next !== 'perform';
+  $('edit').hidden = next !== 'edit';
+}
+
+function currentSource(id) {
+  return state?.sources.find((s) => s.id === id) ?? null;
 }
 
 function renderSources() {
@@ -79,16 +129,56 @@ function renderSources() {
 
 function renderSource(source) {
   const update = (changes) => send(MSG.UPDATE_SOURCE, { sourceId: source.id, changes });
-  const route = routeSelect(source.route, (value) => update({ route: value }));
+  const route = routeSelect(source.route, (value) => update({ route: value }), `Route for ${source.label}`);
   route.disabled = source.inputFx;
   route.title = source.inputFx ? 'Routed by Input FX' : 'Route';
+  const sides = h(
+    'div',
+    { className: 'sides', role: 'group', 'aria-label': 'Crossfader side' },
+    ...DECK_SIDES.map((side) =>
+      h('button', {
+        type: 'button',
+        className: 'side',
+        textContent: side,
+        title: `Put this source on side ${side} of the crossfader`,
+        dataset: { side },
+        onclick: () => update({ side: currentSource(source.id)?.side === side ? null : side })
+      })
+    )
+  );
+  const level = h('input', {
+    type: 'range',
+    min: 0,
+    max: SOURCE_LEVEL_MAX,
+    step: 0.01,
+    'aria-label': `Level for ${source.label}`,
+    title: 'Double-click to reset',
+    dataset: { role: 'level' },
+    oninput: (e) => {
+      setFill(e.target, e.target.value / SOURCE_LEVEL_MAX);
+      update({ level: Number(e.target.value) });
+    },
+    ondblclick: () => update({ level: 1 })
+  });
   return h(
     'li',
-    { className: 'source' },
-    h('span', { className: 'source-label', title: source.label, textContent: source.label }),
-    route,
-    h('label', { title: 'Send through Input FX first' }, h('input', { type: 'checkbox', checked: source.inputFx, onchange: (e) => update({ inputFx: e.target.checked }) }), ' In FX'),
-    h('button', { type: 'button', title: 'Stop capturing', textContent: '✕', onclick: () => send(MSG.REMOVE_SOURCE, { sourceId: source.id }) })
+    { className: 'source', dataset: { source: source.id } },
+    h(
+      'div',
+      { className: 'source-top' },
+      sides,
+      h('span', { className: 'source-label', title: source.label, textContent: source.label }),
+      h('button', { type: 'button', className: 'source-remove', title: 'Stop capturing', 'aria-label': `Stop capturing ${source.label}`, textContent: '✕', onclick: () => send(MSG.REMOVE_SOURCE, { sourceId: source.id }) })
+    ),
+    h(
+      'div',
+      { className: 'source-controls' },
+      h('button', { type: 'button', className: 'mute', textContent: 'Mute', dataset: { role: 'mute' }, onclick: () => update({ muted: !currentSource(source.id)?.muted }) }),
+      level,
+      h('output', { dataset: { role: 'level-readout' } }),
+      route,
+      h('label', { className: 'check', title: 'Send through Input FX first' }, h('input', { type: 'checkbox', checked: source.inputFx, onchange: (e) => update({ inputFx: e.target.checked }) }), ' In FX')
+    )
   );
 }
 
@@ -111,18 +201,6 @@ function renderPending() {
 async function goToTab({ tabId, windowId }) {
   await chrome.tabs.update(tabId, { active: true });
   await chrome.windows.update(windowId, { focused: true });
-}
-
-function fillEffectOptions(select, busId) {
-  const groups = new Map();
-  for (const effect of listEffects(busId)) {
-    if (!effect.available) continue;
-    if (!groups.has(effect.category)) groups.set(effect.category, h('optgroup', { label: effect.category }));
-    groups.get(effect.category).append(h('option', { value: effect.id, textContent: effect.name }));
-  }
-  const previous = select.value;
-  select.replaceChildren(...groups.values());
-  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
 }
 
 function bindAddBar() {
@@ -163,17 +241,24 @@ function renderBuses() {
 
 function renderBus(busId) {
   const bus = state.buses[busId];
+  const engage = h('button', {
+    type: 'button',
+    className: 'switch',
+    dataset: { role: 'engage' },
+    onclick: () => send(MSG.SET_BUS_ENGAGED, { busId, engaged: !state.buses[busId].engaged })
+  });
   const head = h(
     'div',
     { className: 'bus-head' },
     h('h2', { textContent: BUS_LABELS[busId] }),
     h('span', { className: 'bus-count', dataset: { role: 'count' } }),
+    engage,
     h('button', { type: 'button', className: 'bus-add', title: `Add an effect to ${BUS_LABELS[busId]}`, textContent: '+', onclick: () => pickBus(busId) })
   );
   const el = h('div', { className: 'bus', dataset: { bus: busId } }, head);
   const busRows = [];
   if (busId === 'input') {
-    busRows.push(h('div', { className: 'param' }, h('label', { textContent: 'Route' }), routeSelect(state.inputRoute, (route) => send(MSG.SET_INPUT_ROUTE, { route })), h('output')));
+    busRows.push(h('div', { className: 'param' }, h('label', { textContent: 'Route' }), routeSelect(state.inputRoute, (route) => send(MSG.SET_INPUT_ROUTE, { route }), 'Input FX route'), h('output')));
   }
   if (busRows.length) el.append(h('div', { className: 'params' }, ...busRows));
   if (bus.slots.length) el.append(h('ol', { className: 'chain' }, ...bus.slots.map((slot, i) => renderSlot(busId, slot, i, bus.slots.length))));
@@ -249,7 +334,7 @@ function createEditor(busId, uid, effect) {
     params: effect.params,
     getValues: () => currentSlot(busId, uid)?.params ?? {},
     setParam: (paramId, value) => send(MSG.SET_PARAM, { busId, slot: uid, paramId, value }),
-    arm: (paramId, el) => armLearn({ busId, uid, paramId }, el)
+    arm: (paramId, el) => armLearn({ kind: 'param', busId, uid, paramId }, el)
   });
 }
 
@@ -267,7 +352,7 @@ function renderLfo(busId, slot, effect) {
   const setLfo = (changes) => send(MSG.SET_LFO, { busId, slot: slot.uid, changes });
   const target = h(
     'select',
-    { onchange: (e) => setLfo({ target: e.target.value || null }) },
+    { 'aria-label': 'LFO target', onchange: (e) => setLfo({ target: e.target.value || null }) },
     h('option', { value: '', textContent: 'Off' }),
     ...effect.params.filter(isModulatable).map((p) => h('option', { value: p.id, textContent: p.name }))
   );
@@ -301,6 +386,7 @@ function renderMasterVolume() {
       max: MASTER_MAX,
       step: 0.01,
       title: 'Double-click to reset',
+      'aria-label': 'Master volume',
       oninput: (e) => {
         setFill(e.target, e.target.value / MASTER_MAX);
         setLevel(e.target.value);
@@ -314,22 +400,26 @@ function renderMasterVolume() {
 function renderParam(busId, uid, param) {
   return controlRow(
     param,
-    (value) => send(MSG.SET_PARAM, { busId, slot: uid, paramId: param.id, value }),
+    (value) => {
+      send(MSG.SET_PARAM, { busId, slot: uid, paramId: param.id, value });
+      flash(`${BUS_LABELS[busId]} ${param.name}`, formatValue(param, value));
+    },
     { param: param.id },
-    (row) => armLearn({ busId, uid, paramId: param.id }, row)
+    (row) => armLearn({ kind: 'param', busId, uid, paramId: param.id }, row)
   );
 }
 
 function controlRow(param, setValue, dataset, onArm) {
   const control =
     param.kind === 'enum'
-      ? h('select', { onchange: (e) => setValue(e.target.value) }, ...param.options.map((o) => h('option', { value: o, textContent: o })))
+      ? h('select', { 'aria-label': param.name, onchange: (e) => setValue(e.target.value) }, ...param.options.map((o) => h('option', { value: o, textContent: o })))
       : h('input', {
           type: 'range',
           min: 0,
           max: SLIDER_STEPS,
           step: 1,
           title: 'Double-click to reset',
+          'aria-label': param.name,
           oninput: (e) => {
             setFill(e.target, e.target.value / SLIDER_STEPS);
             setValue(fromNormalized(param, e.target.value / SLIDER_STEPS));
@@ -345,10 +435,6 @@ function setIfIdle(el, value) {
   el.value = value;
 }
 
-function setFill(input, normalized) {
-  input.style.setProperty('--fill', `${clamp(normalized, 0, 1) * 100}%`);
-}
-
 function updateRow(row, param, value) {
   const control = row.querySelector('[data-role="param"]');
   setIfIdle(control, param.kind === 'enum' ? value : Math.round(toNormalized(param, value) * SLIDER_STEPS));
@@ -356,23 +442,66 @@ function updateRow(row, param, value) {
   row.querySelector('output').textContent = param.kind === 'enum' ? '' : formatValue(param, value);
 }
 
+function setPressed(el, on, label) {
+  el.classList.toggle('on', on);
+  el.setAttribute('aria-pressed', String(on));
+  if (label) {
+    el.title = label;
+    el.setAttribute('aria-label', label);
+  }
+}
+
+function updateSources() {
+  for (const source of state.sources) {
+    const el = document.querySelector(`.source[data-source="${CSS.escape(source.id)}"]`);
+    if (!el) continue;
+    for (const btn of el.querySelectorAll('.side')) setPressed(btn, source.side === btn.dataset.side);
+    setPressed(el.querySelector('[data-role="mute"]'), source.muted, source.muted ? `Unmute ${source.label}` : `Mute ${source.label}`);
+    el.classList.toggle('muted', source.muted);
+    const level = el.querySelector('[data-role="level"]');
+    setIfIdle(level, source.level);
+    setFill(level, level.value / SOURCE_LEVEL_MAX);
+    el.querySelector('[data-role="level-readout"]').textContent = `${Math.round(source.level * 100)}%`;
+  }
+  const decks = state.sources.length >= 2 || state.sources.some((s) => s.side);
+  $('xfader-row').hidden = !decks;
+  setIfIdle($('xfader'), state.crossfader);
+  $('xfader-row').classList.toggle('live', state.sources.some((s) => s.side));
+}
+
 function updateValues() {
   setIfIdle($('bpm'), state.bpm);
-  setIfIdle($('master-volume'), state.master);
-  setFill($('master-volume'), $('master-volume').value / MASTER_MAX);
-  $('master-readout').textContent = `${Math.round(state.master * 100)}%`;
   $('auto').classList.toggle('on', state.autoBpm);
+  $('auto').setAttribute('aria-pressed', String(state.autoBpm));
+  $('quantize').textContent = state.quantize === 'Off' ? 'Q off' : `Q ${state.quantize}`;
+  $('quantize').classList.toggle('on', state.quantize !== 'Off');
   const detected = state.detected;
   $('detected').textContent = detected ? `Heard ${detected.bpm.toFixed(1)} (${Math.round(detected.confidence * 100)}%)` : 'Heard —';
   $('detected').classList.toggle('confident', Boolean(detected && detected.confidence >= AUTO_CONFIDENT));
+  idleReadout();
+  updateSources();
+  for (const btn of $('routing').children) btn.setAttribute('aria-checked', String(btn.dataset.routing === state.busRouting));
+  $('routing-hint').textContent = ROUTING_HINTS[state.busRouting];
+
+  const volume = $('master-volume');
+  if (volume) {
+    setIfIdle(volume, state.master);
+    setFill(volume, volume.value / MASTER_MAX);
+    $('master-readout').textContent = `${Math.round(state.master * 100)}%`;
+  }
 
   for (const busId of BUS_IDS) {
-    const { slots } = state.buses[busId];
+    const bus = state.buses[busId];
+    const { slots } = bus;
     const busEl = document.querySelector(`.bus[data-bus="${busId}"]`);
     if (!busEl) continue;
-    busEl.classList.toggle('active', slots.some((s) => s.enabled));
+    busEl.classList.toggle('active', busLit(bus));
+    busEl.classList.toggle('disengaged', !bus.engaged);
     const count = busEl.querySelector('[data-role="count"]');
-    count.textContent = slots.length ? `${slots.filter((s) => s.enabled).length}/${slots.length} on` : '';
+    count.textContent = !slots.length ? '' : bus.engaged ? `${slots.filter((s) => s.enabled).length}/${slots.length} on` : 'Bus off';
+    const engage = busEl.querySelector('[data-role="engage"]');
+    setPressed(engage, bus.engaged, `${BUS_LABELS[busId]} ${bus.engaged ? 'on' : 'off'}. Switches every effect in the bus together.`);
+    engage.disabled = slots.length === 0;
     busEl.querySelector('.bus-add').disabled = slots.length >= MAX_SLOTS;
 
     for (const slot of slots) {
@@ -380,11 +509,8 @@ function updateValues() {
       if (!el) continue;
       const toggle = el.querySelector('[data-role="toggle"]');
       const name = getEffect(slot.effect).name;
-      toggle.classList.toggle('on', slot.enabled);
-      toggle.setAttribute('aria-pressed', String(slot.enabled));
-      toggle.title = `${name} ${slot.enabled ? 'on' : 'off'}`;
-      toggle.setAttribute('aria-label', toggle.title);
-      el.classList.toggle('active', slot.enabled);
+      setPressed(toggle, slot.enabled, `${name} ${slot.enabled ? 'on' : 'off'}`);
+      el.classList.toggle('active', slot.enabled && bus.engaged);
 
       for (const param of getEffect(slot.effect).params) {
         const row = el.querySelector(`.param[data-param="${param.id}"]`);
@@ -399,11 +525,8 @@ function updateValues() {
       const power = el.querySelector('[data-role="lfo-toggle"]');
       if (power) {
         const lfoOn = Boolean(slot.lfo?.enabled);
-        power.classList.toggle('on', lfoOn);
-        power.setAttribute('aria-pressed', String(lfoOn));
+        setPressed(power, lfoOn, slot.lfo?.target ? `LFO ${lfoOn ? 'on' : 'off'}` : 'Pick an LFO target first');
         power.disabled = !slot.lfo?.target;
-        power.title = slot.lfo?.target ? `LFO ${lfoOn ? 'on' : 'off'}` : 'Pick an LFO target first';
-        power.setAttribute('aria-label', power.title);
         el.querySelector('.lfo').classList.toggle('off', !lfoOn);
       }
       editors.get(slot.uid)?.update(slot.params);
@@ -414,6 +537,19 @@ function updateValues() {
 function updateMeter({ peak }) {
   const db = 20 * Math.log10(Math.max(peak, 1e-5));
   $('meter').style.width = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
+}
+
+function updateTransport(transport) {
+  perform.meter(transport);
+  const leds = $('beats').children;
+  if (!transport) {
+    for (const led of leds) led.classList.remove('on');
+    $('position').textContent = '–.–';
+    return;
+  }
+  const { bar, beat } = position(transport.beat);
+  for (let i = 0; i < BEATS_PER_BAR; i++) leds[i].classList.toggle('on', i === beat - 1);
+  $('position').textContent = `${bar}.${beat}`;
 }
 
 function updateSlotMeters(readings = {}) {
@@ -427,46 +563,108 @@ function updateSlotMeters(readings = {}) {
 }
 
 function armLearn(target, el) {
-  if (!midi.learning) return;
+  if (!midi.learning) return false;
   midi.arm(target);
   document.querySelectorAll('.learn-target').forEach((node) => node.classList.remove('learn-target'));
   el.classList.add('learn-target');
+  return true;
 }
 
-function handleMidi({ busId, uid, paramId }, normalized) {
+function handleMidi(target, normalized) {
+  if (target.kind === 'ctrl') {
+    const resolved = perform.ctrlTarget(target.busId, target.index);
+    if (!resolved) return;
+    const value = fromNormalized(resolved.param, normalized);
+    send(MSG.SET_PARAM, { busId: target.busId, slot: resolved.slot.uid, paramId: resolved.param.id, value });
+    flash(`${BUS_LABELS[target.busId]} ${resolved.param.name}`, formatValue(resolved.param, value));
+    return;
+  }
+  const { busId, uid, paramId } = target;
   const slot = uid && currentSlot(busId, uid);
   const param = slot && getEffect(slot.effect).params.find((p) => p.id === paramId);
   if (param) send(MSG.SET_PARAM, { busId, slot: uid, paramId, value: fromNormalized(param, normalized) });
 }
 
+function handleMidiButton(target, down) {
+  if (target.kind === 'bus') (down ? perform.pressBus : perform.releaseBus)(target.busId);
+  else if (target.kind === 'pad') (down ? perform.pressPad : perform.releasePad)(target.index);
+}
+
+function tap() {
+  const bpm = tapTempo.tap();
+  send(MSG.TAP, { bpm, beat: (tapTempo.count - 1) % BEATS_PER_BAR, at: Date.now() });
+  flash('Tap', bpm ? `${bpm} BPM` : 'Beat 1 set');
+}
+
+function pressAction(action) {
+  if (!state) return;
+  if (action.kind === 'bus') perform.pressBus(action.busId);
+  else if (action.kind === 'pad') {
+    action.pad = perform.padAt(action.index);
+    perform.pressPad(action.pad);
+  } else if (action.kind === 'chop') perform.chop();
+  else if (action.kind === 'bank') perform.nextBank();
+  else if (action.kind === 'tap') tap();
+  else if (action.kind === 'stop') perform.stopPads();
+  else if (action.kind === 'rec') perform.toggleRecord();
+}
+
+function releaseAction(action) {
+  if (action.kind === 'bus') perform.releaseBus(action.busId);
+  else if (action.kind === 'pad' && action.pad !== undefined) perform.releasePad(action.pad);
+}
+
 function bindControls() {
-  const preset = $('preset');
-  preset.append(h('option', { value: '', textContent: 'Load preset…' }), ...Object.entries(PRESETS).map(([id, p]) => h('option', { value: id, textContent: p.name })));
-  preset.addEventListener('change', async () => {
-    if (preset.value) await send(MSG.LOAD_PRESET, { presetId: preset.value });
-    preset.value = '';
+  createPresets({ select: $('preset'), openButton: $('save-preset'), form: $('preset-form'), send, getState: () => state, flash, showStatus });
+
+  for (const view of VIEWS) $(`view-${view}`).addEventListener('click', () => setView(view));
+  $('view-perform').parentElement.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const next = VIEWS[(VIEWS.indexOf(document.body.dataset.view) + 1) % VIEWS.length];
+    setView(next);
+    $(`view-${next}`).focus();
   });
+  setView(localStorage.getItem('view'));
 
   $('bpm').addEventListener('change', (e) => send(MSG.SET_BPM, { bpm: e.target.value }));
-  $('tap').addEventListener('click', () => {
-    const bpm = tapTempo.tap();
-    if (bpm) send(MSG.SET_BPM, { bpm });
-  });
+  $('tap').addEventListener('click', tap);
   $('half').addEventListener('click', () => send(MSG.SET_BPM, { bpm: state.bpm / 2 }));
   $('double').addEventListener('click', () => send(MSG.SET_BPM, { bpm: state.bpm * 2 }));
   $('auto').addEventListener('click', () => send(MSG.SET_AUTO_BPM, { enabled: !state.autoBpm }));
+  $('quantize').addEventListener('click', () => {
+    const next = QUANTIZE_OPTIONS[(QUANTIZE_OPTIONS.indexOf(state.quantize) + 1) % QUANTIZE_OPTIONS.length];
+    send(MSG.SET_QUANTIZE, { quantize: next });
+    flash('Quantize', next === 'Off' ? 'Off' : next);
+  });
   $('learn').addEventListener('click', async () => {
     const on = await midi.toggleLearn();
     $('learn').classList.toggle('armed', on);
+    $('learn').setAttribute('aria-pressed', String(on));
     document.body.classList.toggle('learning', on);
     if (!on) document.querySelectorAll('.learn-target').forEach((el) => el.classList.remove('learn-target'));
   });
+
+  $('xfader').addEventListener('input', (e) => send(MSG.SET_CROSSFADER, { value: Number(e.target.value) }));
+  $('xfader').addEventListener('dblclick', () => send(MSG.SET_CROSSFADER, { value: 0 }));
 
   $('status').addEventListener('click', () => {
     $('status').hidden = true;
   });
 
+  $('routing').append(
+    ...BUS_ROUTINGS.map((routing) => h('button', { type: 'button', role: 'radio', textContent: routing, dataset: { routing }, onclick: () => send(MSG.SET_BUS_ROUTING, { routing }) }))
+  );
+
   bindAddBar();
+
+  document.addEventListener('keydown', (e) => {
+    if (!document.querySelector('dialog[open]')) keys.down(e);
+  });
+  document.addEventListener('keyup', (e) => keys.up(e));
+  window.addEventListener('blur', () => keys.releaseAll());
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) keys.releaseAll();
+  });
 
   document.addEventListener('pointerdown', () => {
     pointerDown = true;
@@ -484,6 +682,7 @@ chrome.runtime.onMessage.addListener((message) => {
   else if (message.type === MSG.METER) {
     updateMeter(message.level);
     updateSlotMeters(message.level.slots);
+    updateTransport(message.transport ?? null);
   }
   return false;
 });

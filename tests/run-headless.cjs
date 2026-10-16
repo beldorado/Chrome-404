@@ -4,7 +4,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
-const SUITES = process.argv.slice(2).length ? process.argv.slice(2) : ['filter-smoke', 'tempo-smoke', 'fx-smoke'];
+const SUITES = process.argv.slice(2).length ? process.argv.slice(2) : ['filter-smoke', 'tempo-smoke', 'fx-smoke', 'perform-smoke'];
 
 if (!process.env.PW_CORE || !process.env.CHROMIUM) {
   console.error('Set PW_CORE (path to a playwright-core package) and CHROMIUM (path to a Chromium chrome.exe).');

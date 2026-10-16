@@ -1,4 +1,4 @@
-import { EffectProcessor, RingBuffer } from './base.js';
+import { EffectProcessor, RingBuffer, mod } from './base.js';
 import { divisionBeats } from '../../shared/sync.js';
 
 const RESYNC = 192;
@@ -13,7 +13,7 @@ class VarispeedProcessor extends EffectProcessor {
   }
 
   reset() {
-    this.clock = 0;
+    this.prevPhase = null;
     this.read = this.abs - 1;
     this.lastRate = 1;
     this.resync = 0;
@@ -37,7 +37,8 @@ class VarispeedProcessor extends EffectProcessor {
   }
 
   render(inL, inR, outL, outR, n) {
-    const cycle = Math.max(1, Math.round(this.samplesPerBeat() * divisionBeats(this.params.division, 4)));
+    const cycle = Math.max(1, this.samplesPerBeat() * divisionBeats(this.params.division, 4));
+    const start = this.gridFrames();
     for (let i = 0; i < n; i++) {
       this.ring.push(inL[i], inR[i]);
       this.abs++;
@@ -47,9 +48,10 @@ class VarispeedProcessor extends EffectProcessor {
         outR[i] = inR[i];
         continue;
       }
-      if (this.clock > 0 && this.clock % cycle === 0 && this.read < live) this.resync = RESYNC;
-      const phase = (this.clock % cycle) / cycle;
-      this.clock++;
+      const phase = mod(start + i, cycle) / cycle;
+      const wrapped = this.prevPhase !== null && phase < this.prevPhase;
+      this.prevPhase = phase;
+      if (wrapped && this.read < live) this.resync = RESYNC;
 
       if (this.resync > 0) {
         this.read = Math.min(live, this.read + this.lastRate);

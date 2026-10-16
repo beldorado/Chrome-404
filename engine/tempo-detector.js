@@ -1,4 +1,4 @@
-import { estimateTempo } from '../shared/bpm.js';
+import { beatPhase, estimateTempo } from '../shared/bpm.js';
 
 const HOP = 512;
 const HISTORY_SECONDS = 11;
@@ -18,6 +18,7 @@ export class TempoDetector {
     this.frameRate = ctx.sampleRate / HOP;
     this.size = Math.round(HISTORY_SECONDS * this.frameRate);
     this.history = new Float32Array(this.size);
+    this.times = new Float64Array(this.size);
     this.reset();
 
     this.node = new AudioWorkletNode(ctx, 'chrome404-onset', {
@@ -39,12 +40,13 @@ export class TempoDetector {
     this.recent = [];
   }
 
-  push({ onsets, energy }) {
+  push({ onsets, energy, time = null }) {
     if (energy < SILENCE_ENERGY) return;
-    for (const v of onsets) {
+    onsets.forEach((v, k) => {
       this.history[this.write] = v;
+      this.times[this.write] = time === null ? NaN : time - (onsets.length - 1 - k + 0.5) / this.frameRate;
       this.write = (this.write + 1) % this.size;
-    }
+    });
     this.filled = Math.min(this.size, this.filled + onsets.length);
     this.sinceEstimate += onsets.length;
     if (this.sinceEstimate < ESTIMATE_EVERY_SECONDS * this.frameRate) return;
@@ -53,10 +55,10 @@ export class TempoDetector {
     if (estimate) this.onEstimate(estimate);
   }
 
-  ordered() {
-    const out = new Float32Array(this.filled);
+  ordered(source = this.history) {
+    const out = new source.constructor(this.filled);
     const start = (this.write - this.filled + this.size) % this.size;
-    for (let i = 0; i < this.filled; i++) out[i] = this.history[(start + i) % this.size];
+    for (let i = 0; i < this.filled; i++) out[i] = source[(start + i) % this.size];
     return out;
   }
 
@@ -68,6 +70,9 @@ export class TempoDetector {
     if (this.recent.length > SMOOTHING_WINDOW) this.recent.shift();
     const sorted = [...this.recent].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
-    return { bpm: Math.round(median * 10) / 10, confidence: Math.round(result.confidence * 100) / 100 };
+    const bpm = Math.round(median * 10) / 10;
+    const times = this.ordered(this.times);
+    const phase = Number.isFinite(times[times.length - 1]) ? beatPhase(this.ordered(), times, bpm) : null;
+    return { bpm, confidence: Math.round(result.confidence * 100) / 100, beat: phase?.beat ?? null };
   }
 }

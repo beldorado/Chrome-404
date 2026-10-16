@@ -84,13 +84,13 @@ export function tanhCurve(amount, asymmetry = 0) {
   return curve(2048, (x) => Math.tanh(k * (x + asymmetry * x * x)) / k);
 }
 
-export function workletNode(ctx, processor, params, bpm) {
+export function workletNode(ctx, processor, params, bpm, origin = 0) {
   const node = new AudioWorkletNode(ctx, processor, {
     numberOfInputs: 1,
     numberOfOutputs: 1,
     outputChannelCount: [2],
     parameterData: { bpm },
-    processorOptions: { params }
+    processorOptions: { params, origin }
   });
   return {
     node,
@@ -100,24 +100,30 @@ export function workletNode(ctx, processor, params, bpm) {
     tempo(value) {
       node.parameters.get('bpm').setValueAtTime(value, ctx.currentTime);
     },
-    active(on) {
-      node.parameters.get('active').setValueAtTime(on ? 1 : 0, ctx.currentTime);
+    grid(value) {
+      node.port.postMessage({ type: 'grid', origin: value });
+    },
+    active(on, when = 0) {
+      const param = node.parameters.get('active');
+      param.cancelScheduledValues(ctx.currentTime);
+      param.setValueAtTime(on ? 1 : 0, Math.max(ctx.currentTime, when));
     }
   };
 }
 
 export function workletEffect(processor, fixed = {}) {
-  return (ctx, initial, { bpm = 90 } = {}) => {
+  return (ctx, initial, { bpm = 90, origin = 0 } = {}) => {
     const input = ctx.createGain();
     const output = ctx.createGain();
-    const worklet = workletNode(ctx, processor, { ...fixed, ...initial }, bpm);
+    const worklet = workletNode(ctx, processor, { ...fixed, ...initial }, bpm, origin);
     input.connect(worklet.node).connect(output);
     return {
       input,
       output,
       setParam: (id, value) => worklet.set(id, value),
       setTempo: (value) => worklet.tempo(value),
-      setActive: (on) => worklet.active(on),
+      setGrid: (value) => worklet.grid(value),
+      setActive: (on, when) => worklet.active(on, when),
       dispose() {
         disconnectAll(input, worklet.node, output);
       }

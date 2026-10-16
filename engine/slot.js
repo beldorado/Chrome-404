@@ -21,6 +21,7 @@ export class Slot {
     this.effect = null;
     this.enabled = false;
     this.mixAmount = 1;
+    this.switchAt = 0;
   }
 
   setEffect(effectId, params, context) {
@@ -40,8 +41,9 @@ export class Slot {
     this.mix();
   }
 
-  setEnabled(enabled) {
+  setEnabled(enabled, when = 0) {
     this.enabled = enabled;
+    this.switchAt = when;
     this.mix();
   }
 
@@ -58,6 +60,10 @@ export class Slot {
     this.effect?.setTempo?.(bpm);
   }
 
+  setGrid(origin) {
+    this.effect?.setGrid?.(origin);
+  }
+
   dispose() {
     this.effect?.dispose();
     this.effect = null;
@@ -69,15 +75,22 @@ export class Slot {
   }
 
   mix() {
+    const now = this.ctx.currentTime;
+    const at = Math.max(now, this.switchAt);
     const active = this.enabled && this.effect !== null;
     if (active !== this.lastActive) {
-      this.effect?.setActive?.(active);
+      this.effect?.setActive?.(active, at);
       this.lastActive = active;
     }
-    const now = this.ctx.currentTime;
     const angle = (this.mixAmount * Math.PI) / 2;
-    this.bypass.gain.setTargetAtTime(active ? 0 : 1, now, CROSSFADE);
-    this.dry.gain.setTargetAtTime(active ? Math.cos(angle) : 0, now, CROSSFADE);
-    this.wet.gain.setTargetAtTime(active ? Math.sin(angle) : 0, now, CROSSFADE);
+    const targets = [
+      [this.bypass.gain, active ? 0 : 1],
+      [this.dry.gain, active ? Math.cos(angle) : 0],
+      [this.wet.gain, active ? Math.sin(angle) : 0]
+    ];
+    for (const [param, value] of targets) {
+      param.cancelScheduledValues(now);
+      param.setTargetAtTime(value, at, CROSSFADE);
+    }
   }
 }

@@ -1,0 +1,75 @@
+# Chrome-404
+
+SP-404 MK2-style effect buses, pads and resampling for any tab's audio. A Chrome extension (Manifest V3, Chrome 116+), plain ES modules, no build step.
+
+## Install
+
+1. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked** and pick this folder.
+2. On a tab that's playing audio, click the Chrome-404 icon (or press Alt+Shift+4). The side panel opens and the tab's audio runs through the engine.
+
+## Perform view
+
+The panel opens on **Perform**, laid out like the hardware:
+
+- **Screen**: tempo, beat LEDs with bar.beat, the last control you touched, and the level meter.
+- **CTRL knobs**: the three main controls of the selected bus's effect. Pick or swap the effect from the menu above them. Buses with a chain show a chip for each effect so you can choose which one the knobs control.
+- **Bus FX buttons** (keys 1–6): tap to switch a bus on or off, or hold to play it only while held. Each bus remembers the last settings of every effect you've used on it.
+- **Pads** (keys Q W E R / A S D F / Z X C V play the visible bank, laid out like the pads): 12 pads per bank in Loop, Gate or One-shot mode. Loops start on the grid. A pad lights in the colour of the bus it plays into.
+- **Rec** (key T): resamples what you hear into the selected empty pad (or the next empty one). It records 1, 2 or 4 bars starting on the next bar, or runs until you stop it. Recordings know their BPM and can follow tempo changes. For a loaded sample, type its BPM in the pad's BPM box to let it follow too.
+- **Banks** (key B): two banks of 12 pads, A1–A12 and B1–B12.
+- **Selecting pads**: Shift+click selects a pad without playing it. Ctrl+click (Cmd+click on a Mac) adds or removes pads without playing them. With several selected, mode, Follow BPM, BPM, choke group and level apply to all of them, a field shows Mixed where they differ, and Clear empties every selected pad. Click a tag in the pad panel to take that pad out, or click any pad to go back to it alone.
+- **Moving pads**: drag a pad onto another pad, then choose Move, Copy or Cancel (plus Swap if the target already holds a sample). The sample goes with its trim, chops, BPM and pad settings, and Move leaves the source pad empty. Hold Shift while you drag so the pad doesn't play. A plain drag stops the pad once the drag starts. To reach the other bank, hover the A/B switch for half a second, or press B while dragging. Esc cancels.
+- **Choke groups**: put pads in the same group (1–4) and starting one cuts off any other pad in that group, like an open and closed hi-hat. A quantized loop cuts the others on the beat it starts. The group shows on the pad as G1–G4.
+- **Pad tools**: load an audio file (or drop one onto a pad), export a pad as a 16-bit WAV, or clear it (click twice). Pads are kept between sessions.
+- **Edit / chop**: a waveform editor for the selected pad.
+  - Drag **S** and **E** to trim. This doesn't change the audio, Reset trim brings back the whole sample, and it's saved as you go.
+  - Add chops with Split evenly (2–16), Find hits (drum hits and note starts), a double-click, or by tapping **G** in time while it plays.
+  - Shift+scroll zooms in and out around the mouse, and Alt+scroll zooms the amplitude so quiet parts are easier to chop. While zoomed in, hold the scroll wheel down and drag the waveform to move along it, or drag the bar under it (or scroll sideways on a trackpad). Shift+double-click resets the time zoom and Alt+double-click resets the amplitude. Shift and Alt clicks don't play or add chops.
+  - Click a slice to hear it. Drag a chop line to move it and double-click it to remove it. Chops snap to the 1/16 grid when the sample knows its BPM, and to the nearest zero crossing otherwise.
+  - **Send slices to pads** puts each slice on its own empty pad (the ones after the source, wrapping round to the start) as a One-shot with tiny fades at each edge.
+- **Sources**: each captured tab gets a level fader and a mute button, and can be put on side A or B of the crossfader.
+
+**Edit** is the full chain editor: up to 8 effects per bus, every parameter, an LFO per slot, and an on/off switch per bus.
+
+**Presets**: pick one from the menu next to Perform/Edit to load it. **Save** stores the current FX setup under a name: each bus's effects, their settings and LFOs, which buses are on, and the bus routing. Saving under a name you already used replaces that preset. Your presets appear under Saved in the menu and as tags in the save box, where × deletes one (click twice). Pads and tempo aren't part of a preset.
+
+**Bus routing** (top of Edit): **Parallel** is the SP-404 layout, where Bus 1 and Bus 2 each feed Bus 3, then Bus 4. **Series** chains them, Bus 1 → Bus 2 → Bus 3 → Bus 4, so a source sent to Bus 1 runs through every bus and one sent to Bus 2 skips Bus 1.
+
+### Timing
+
+- **Tap** (Space): your first tap marks beat 1 of the bar, and later taps set the tempo.
+- **Auto**: follows the tempo it hears and locks the beat grid to the detected beats.
+- **Q** (quantize): sets the grid that glitch effects (Scatter, Stopper, DJ Looper, Slicer, Downer) and loops start on. Glitch patterns always follow the grid, so a Slicer pattern lines up with the bar even when quantize is off.
+
+### Keys and MIDI
+
+Keys 1–6 are the bus FX buttons. The pads are the 4×3 block Q W E R / A S D F / Z X C V, matching the pad grid. T records, G chops at the playhead while editing, and B switches bank, so the column next to the pads holds the functions. Space is tap and Esc stops all pads. They work while the panel has focus, except while you're typing in the BPM box. Space activates a button only if you reached that button with Tab.
+
+**MIDI learn**: click a CTRL knob, an Edit slider, a bus button or a pad, then move a knob or hit a pad on your controller. Notes (or CC ≥ 64) press bus buttons and pads. A CTRL knob mapping follows whichever effect is selected.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `background.js` | Service worker: capture, offscreen document, settings storage |
+| `offscreen/` | Hosts the `AudioContext` and engine, routes messages, stores pads in IndexedDB |
+| `engine/` | `AudioEngine`, buses, slots, pads, tempo detection, recorder |
+| `effects/` | Effect definitions, `registry.js` (CTRL knobs, quantized effects), AudioWorklets |
+| `shared/` | State shape, messages, beat grid, params, LFO, WAV, pad storage |
+| `sidepanel/` | UI: `perform.js` (Perform view), `sidepanel.js` (shell + Edit view), keys, MIDI |
+
+## Tests
+
+The audio suites render the engine offline in a browser and check the output signal:
+
+```sh
+PW_CORE=<path to playwright-core> CHROMIUM=<path to chrome.exe> node tests/run-headless.cjs
+```
+
+This runs `filter-smoke`, `tempo-smoke`, `fx-smoke` and `perform-smoke`. Pass suite names to run a subset.
+
+The end-to-end suite loads the unpacked extension and drives the side panel. It needs Playwright's own Chromium, because branded Chrome won't load unpacked extensions from the command line (`node <playwright-core>/cli.js install chromium`):
+
+```sh
+PW_CORE=<path to playwright-core> node tests/run-extension.cjs [screenshot-dir]
+```
