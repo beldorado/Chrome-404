@@ -1,6 +1,6 @@
 # Chrome-404
 
-SP-404 MK2-style effect buses, pads and resampling for any tab's audio. A Chrome extension (Manifest V3, Chrome 116+), plain ES modules, no build step.
+SP-404 MK2-style effect buses, pads and resampling for any tab's audio. A Chrome extension (Manifest V3, Chrome 116+), plain ES modules, no build step. For Firefox, see [Firefox-404](https://github.com/beldorado/Firefox-404).
 
 ## Install
 
