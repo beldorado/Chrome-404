@@ -26,23 +26,31 @@ export function createKnob({ param, onChange, onArm }) {
   el.append(readout, h('label', { textContent: param.name }));
 
   let normalized = 0;
+  let current = param.default;
   let drag = null;
 
+  const snap = (value, fine) => (param.step && !fine ? clamp(Math.round(value / param.step) * param.step, param.min, param.max) : value);
+
+  const centre = param.bipolar ? toNormalized(param, param.default) : 0;
+
   const draw = (value) => {
+    current = value;
     normalized = toNormalized(param, value);
     const angle = -SWEEP + normalized * SWEEP * 2;
-    valuePath.setAttribute('d', normalized > 0.001 ? arc(-SWEEP, angle) : '');
+    const from = -SWEEP + centre * SWEEP * 2;
+    valuePath.setAttribute('d', Math.abs(normalized - centre) > 0.001 ? arc(Math.min(from, angle), Math.max(from, angle)) : '');
     const [x, y] = point(angle).split(' ');
     dot.setAttribute('cx', x);
     dot.setAttribute('cy', y);
     readout.textContent = formatValue(param, value);
   };
 
-  const commit = (n) => {
-    const value = fromNormalized(param, clamp(n, 0, 1));
+  const commitValue = (value) => {
     draw(value);
     onChange(value);
   };
+
+  const commit = (n, fine = false) => commitValue(snap(fromNormalized(param, clamp(n, 0, 1)), fine));
 
   el.addEventListener('pointerdown', (e) => {
     onArm?.(el);
@@ -52,7 +60,7 @@ export function createKnob({ param, onChange, onArm }) {
   el.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const scale = e.shiftKey ? FINE : 1;
-    commit(drag.n + ((drag.y - e.clientY) / DRAG_PIXELS) * scale);
+    commit(drag.n + ((drag.y - e.clientY) / DRAG_PIXELS) * scale, e.shiftKey);
   });
   const end = () => {
     drag = null;
@@ -64,7 +72,11 @@ export function createKnob({ param, onChange, onArm }) {
     'wheel',
     (e) => {
       e.preventDefault();
-      commit(normalized + (e.deltaY < 0 ? WHEEL_STEP : -WHEEL_STEP) * (e.shiftKey ? FINE : 1));
+      const up = e.deltaY < 0;
+      let next = snap(fromNormalized(param, clamp(normalized + (up ? WHEEL_STEP : -WHEEL_STEP) * (e.shiftKey ? FINE : 1), 0, 1)), e.shiftKey);
+      const base = snap(current, e.shiftKey);
+      if (param.step && !e.shiftKey && next === base) next = clamp(base + (up ? param.step : -param.step), param.min, param.max);
+      commitValue(next);
     },
     { passive: false }
   );

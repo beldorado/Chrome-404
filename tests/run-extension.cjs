@@ -160,7 +160,7 @@ function check(name, pass, detail = '') {
     await shot('02-playing-recording');
     await page.waitForFunction(() => document.querySelectorAll('.pad')[0].classList.contains('loaded'), null, { timeout: 15000 });
     const pads = (await engine('get-state')).result.pads;
-    check('One bar is resampled into pad 1 with its BPM', pads[0].clip?.name === '1 bar at 90 BPM' && Math.abs(pads[0].clip.duration - (4 * 60) / 90) < 0.01, JSON.stringify(pads[0].clip?.name));
+    check('One bar is resampled into pad 1 with its BPM, named after the time it was recorded', /^\d\d:\d\d:\d\d, [A-Z][a-z]{2} \d{1,2}$/.test(pads[0].clip?.name) && pads[0].clip.bpm === 90 && Math.abs(pads[0].clip.duration - (4 * 60) / 90) < 0.01, JSON.stringify(pads[0].clip?.name));
 
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.pad.playing'));
@@ -264,7 +264,47 @@ function check(name, pass, detail = '') {
       `${cutClip.duration.toFixed(3)} s, ${await page.textContent('.editor-readout')}`
     );
 
+    await page.fill('.editor-title .name-field', 'Boom take');
+    await page.press('.editor-title .name-field', 'Enter');
+    await page.waitForFunction(() => document.querySelectorAll('.pad')[2].querySelector('.pad-name').textContent === 'Boom take', null, { timeout: 3000 }).catch(() => {});
+    const renamed = await page.evaluate(async () => {
+      const { getClip } = await import('/shared/pad-store.js');
+      for (let i = 0; i < 40; i++) {
+        const { name } = await getClip(2);
+        if (name === 'Boom take') return name;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return (await getClip(2)).name;
+    });
+    check('Renaming in the editor renames the pad and the stored sample, and keeps the editor open', renamed === 'Boom take' && (await page.textContent('.pads .pad:nth-child(3) .pad-name')) === 'Boom take' && /4 slices/.test(await page.textContent('.editor-readout')), `${renamed}, ${await page.textContent('.editor-readout')}`);
+
+    const pitchKnob = page.locator('.editor-pitch .knob').nth(1);
+    const speedKnob = page.locator('.editor-pitch .knob').nth(0);
+    await pitchKnob.hover();
+    await page.mouse.wheel(0, -100);
+    await page.mouse.wheel(0, -100);
+    await page.waitForTimeout(200);
+    const linked = (await engine('get-state')).result.pads[2];
+    check('In Vinyl, turning Pitch up 2 st speeds the sample up to match', linked.stretch === 'Vinyl' && Math.abs(linked.speed - Math.pow(2, 2 / 12)) < 1e-6 && linked.pitch === 0 && (await page.textContent('.editor-pitch .knob:nth-child(1) .knob-readout')) === '112%', `${linked.speed.toFixed(4)}, ${await page.textContent('.editor-pitch .knob:nth-child(1) .knob-readout')}`);
+    await shot('06-editor-vinyl');
+    await page.click('.editor-pitch >> text=Stretch');
+    await page.waitForFunction(() => document.querySelector('.editor-pitch').dataset.stretch === 'Stretch');
+    await speedKnob.dblclick();
+    await pitchKnob.hover();
+    await page.mouse.wheel(0, 100);
+    await page.waitForTimeout(200);
+    const split = (await engine('get-state')).result.pads[2];
+    check('In Stretch, Speed and Pitch are set separately', split.stretch === 'Stretch' && split.speed === 1 && split.pitch === -1 && /^Plays [\d.]+ s long$/.test(await page.textContent('.pitch-plays')), `${split.speed} / ${split.pitch} st, ${await page.textContent('.pitch-plays')}`);
+    await shot('06-editor-pitch');
+
     await page.click('.editor >> text=Done');
+    await page.fill('.pad-title .name-field', 'Boom final');
+    await page.locator('.pad-title .name-field').blur();
+    await page.waitForFunction(() => document.querySelectorAll('.pad')[2].querySelector('.pad-name').textContent === 'Boom final', null, { timeout: 3000 }).catch(() => {});
+    check('The pad panel renames the pad too', (await engine('get-state')).result.pads[2].clip.name === 'Boom final');
+    await page.fill('.pad-title .name-field', '');
+    await page.press('.pad-title .name-field', 'Escape');
+    check('Clearing the name and pressing Esc keeps the old name', (await page.inputValue('.pad-title .name-field')) === 'Boom final' && (await engine('get-state')).result.pads[2].clip.name === 'Boom final');
     check('Done closes the editor and brings back the pad details', await page.evaluate(() => document.querySelector('.editor').hidden && !document.querySelector('.pad-detail').hidden));
 
     const padStates = async (from, to) => (await engine('get-state')).result.pads.slice(from, to);

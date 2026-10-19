@@ -41,6 +41,7 @@ export const MSG = {
   STOP_RECORDING: 'stop-recording',
   SET_PAD_REGION: 'set-pad-region',
   SET_PAD_BPM: 'set-pad-bpm',
+  SET_PAD_NAME: 'set-pad-name',
   TRANSFER_PAD: 'transfer-pad',
   STOP_PAD: 'stop-pad',
   PREVIEW: 'preview',

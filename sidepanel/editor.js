@@ -1,10 +1,11 @@
 import { cssVar, h, hiDpiCanvas } from './dom.js';
 import { MSG } from '../shared/messages.js';
-import { padLabel } from '../shared/state.js';
+import { PITCH_RANGE, SPEED_MAX, SPEED_MIN, STRETCH_MODES, padLabel, padRate } from '../shared/state.js';
 import { cleanChops, detectTransients, equalChops, extractSlice, mono, slicesFrom, snapTime, truncateClip, MIN_SLICE_SECONDS } from '../shared/chop.js';
-import { getClip, putClip } from '../shared/pad-store.js';
+import { getClip, putClip, updateClip } from '../shared/pad-store.js';
 import { clamp } from '../shared/params.js';
-import { confirmButton } from './widgets.js';
+import { confirmButton, nameField } from './widgets.js';
+import { createKnob } from './knob.js';
 
 const HIT_PX = 7;
 const SAVE_DELAY_MS = 300;
@@ -16,6 +17,16 @@ const AMP_RATE = 0.002;
 const MAX_GAIN = 32;
 const MIN_VIEW_FRAMES = 128;
 const PAD_HEAD_STALE_S = 0.3;
+const SPEED_PARAM = { id: 'speed', name: 'Speed', min: SPEED_MIN, max: SPEED_MAX, default: 1, scale: 'log', unit: '%', step: 0.01, bipolar: true };
+const PITCH_PARAM = { id: 'pitch', name: 'Pitch', min: -PITCH_RANGE, max: PITCH_RANGE, default: 0, unit: 'st', step: 1, bipolar: true };
+const STRETCH_TITLES = {
+  Vinyl: 'Pitch moves with speed, like a turntable. Follow BPM changes the pitch too.',
+  Stretch: 'Speed and pitch are set separately. Follow BPM keeps the pitch.'
+};
+const STRETCH_HINTS = {
+  Vinyl: 'Speed and pitch move together, like a turntable.',
+  Stretch: 'Speed and pitch are separate, and tempo changes keep the pitch.'
+};
 
 const fmt = (t) => `${t.toFixed(3)} s`;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -45,12 +56,12 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   let raf = 0;
   let saveTimer = null;
   let sensitivity = 'Normal';
-  let clipKey = '';
   let viewStart = 0;
   let viewEnd = 0;
   let gain = 1;
   let pan = null;
   let grab = null;
+  let take = null;
 
   const canvas = h('canvas', {
     className: 'wave-graph',
@@ -61,6 +72,41 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   const thumb = h('div', { className: 'wave-window' });
   const overview = h('div', { className: 'wave-overview', hidden: true, title: 'Drag to move through the sample', 'aria-hidden': 'true' }, thumb);
   const title = h('p', { className: 'editor-title' });
+  const titleLabel = h('strong');
+  const name = nameField({
+    label: 'Sample name',
+    onCommit: (value) => {
+      if (index === null) return;
+      send(MSG.SET_PAD_NAME, { index, name: value });
+      flash('Name', value);
+    }
+  });
+  const speedKnob = createKnob({ param: SPEED_PARAM, onChange: (value) => setSpeed(value) });
+  const pitchKnob = createKnob({ param: PITCH_PARAM, onChange: (value) => setPitch(value) });
+  speedKnob.el.title = 'How fast the sample plays. Drag up or down, Shift for fine steps, double-click for 100%.';
+  pitchKnob.el.title = 'Semitones up or down. Drag up or down, Shift for fine steps, double-click for 0.';
+  const stretchButtons = STRETCH_MODES.map((mode) =>
+    h('button', {
+      type: 'button',
+      role: 'radio',
+      textContent: mode,
+      title: STRETCH_TITLES[mode],
+      dataset: { stretch: mode },
+      onclick: () => {
+        if (index === null) return;
+        send(MSG.UPDATE_PAD, { index, changes: { stretch: mode } });
+        flash('Speed', mode === 'Vinyl' ? 'Vinyl: pitch follows' : 'Stretch: pitch held');
+      }
+    })
+  );
+  const stretchHint = h('p', { className: 'hint pitch-hint' });
+  const plays = h('p', { className: 'pitch-plays' });
+  const pitchPanel = h(
+    'section',
+    { className: 'editor-pitch', 'aria-label': 'Speed and pitch' },
+    h('div', { className: 'pitch-knobs' }, speedKnob.el, h('span', { className: 'pitch-link', 'aria-hidden': 'true' }), pitchKnob.el),
+    h('div', { className: 'pitch-mode' }, h('div', { className: 'seg seg-pair', role: 'radiogroup', 'aria-label': 'What speed does to pitch' }, ...stretchButtons), stretchHint, plays)
+  );
   const readout = h('div', { className: 'editor-readout', 'aria-live': 'polite' });
   const snap = h('input', { type: 'checkbox', checked: true });
   const snapLabel = h('label', { className: 'check', title: 'Move chops and trim points to the nearest point where the waveform crosses zero, so slices start and end without a click. Turn it off to place them exactly.' }, snap, ' Snap to zero crossings');
@@ -112,6 +158,7 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
     readout,
     h('div', { className: 'editor-tools' }, play, chopKey, hits, sens),
     h('div', { className: 'editor-tools' }, split, snapLabel, clearChops),
+    pitchPanel,
     h('div', { className: 'editor-tools editor-send' }, toPads)
   );
 
@@ -121,6 +168,44 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   const tOf = (x, w) => clamp(viewStart + (x / w) * span(), 0, duration);
   const zoomed = () => viewStart > 0 || viewEnd < duration;
   const bpm = () => getState()?.pads[index]?.clip?.bpm ?? null;
+  const pad = () => getState()?.pads[index] ?? null;
+  const rate = () => {
+    const state = getState();
+    return state && pad() ? padRate(pad(), state.bpm) : 1;
+  };
+
+  function setSpeed(value) {
+    if (index === null) return;
+    send(MSG.UPDATE_PAD, { index, changes: { speed: value } });
+    flash('Speed', `${Math.round(value * 100)}%`);
+  }
+
+  function setPitch(value) {
+    if (index === null) return;
+    if (pad()?.stretch === 'Stretch') send(MSG.UPDATE_PAD, { index, changes: { pitch: value } });
+    else send(MSG.UPDATE_PAD, { index, changes: { speed: Math.pow(2, value / 12) } });
+    flash('Pitch', `${value > 0 ? '+' : ''}${value.toFixed(Number.isInteger(value) ? 0 : 1)} st`);
+  }
+
+  function updatePitch(state) {
+    const current = state.pads[index];
+    if (!current?.clip) return;
+    const stretch = current.stretch === 'Stretch' ? 'Stretch' : 'Vinyl';
+    pitchPanel.dataset.stretch = stretch;
+    for (const btn of stretchButtons) btn.setAttribute('aria-checked', String(btn.dataset.stretch === stretch));
+    stretchHint.textContent = STRETCH_HINTS[stretch];
+    speedKnob.setValue(current.speed);
+    pitchKnob.setValue(stretch === 'Stretch' ? current.pitch : 12 * Math.log2(current.speed));
+    const r = padRate(current, state.bpm);
+    const length = `${((current.clip.end - current.clip.start) / r).toFixed(1)} s`;
+    plays.textContent = current.clip.bpm ? `Plays at ${(current.clip.bpm * r).toFixed(1).replace(/\.0$/, '')} BPM, ${length} long` : `Plays ${length} long`;
+    if (playhead && Math.abs(playhead.rate - r) > 1e-6) retime(r);
+  }
+
+  function retime(next) {
+    const at = position();
+    playhead = { t0: performance.now(), offset: at, duration: playhead.offset + playhead.duration - at, rate: next };
+  }
 
   function snapped(t) {
     return clamp(snapTime(t, { data, sampleRate: record.sampleRate, zero: snap.checked }), 0, duration);
@@ -248,7 +333,7 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   function position() {
     if (!playhead) return start;
     const latency = getState()?.latency ?? 0;
-    return clamp(playhead.offset + Math.max(0, (performance.now() - playhead.t0) / 1000 - latency), playhead.offset, playhead.offset + playhead.duration);
+    return clamp(playhead.offset + Math.max(0, (performance.now() - playhead.t0) / 1000 - latency) * playhead.rate, playhead.offset, playhead.offset + playhead.duration);
   }
 
   // Where the pad itself is playing, carried forward from the last meter reading.
@@ -270,7 +355,7 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
     cancelAnimationFrame(raf);
     const tick = () => {
       const latency = getState()?.latency ?? 0;
-      if (playhead && (performance.now() - playhead.t0) / 1000 > playhead.duration + latency) {
+      if (playhead && (performance.now() - playhead.t0) / 1000 > playhead.duration / playhead.rate + latency) {
         playhead = null;
         play.textContent = 'Play';
       }
@@ -288,7 +373,7 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   }
 
   function audition(from, to) {
-    playhead = { t0: performance.now(), offset: from, duration: to - from };
+    playhead = { t0: performance.now(), offset: from, duration: to - from, rate: rate() };
     play.textContent = 'Stop';
     send(MSG.PREVIEW, { index, start: from, end: to });
     animate();
@@ -340,10 +425,12 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   function persist() {
     clearTimeout(saveTimer);
     const target = index;
+    const loaded = take;
+    const frames = record?.channels[0].length;
     const snapshot = { start, end, chops: [...chops] };
     saveTimer = setTimeout(async () => {
-      const current = await getClip(target);
-      if (current?.channels?.length && current.name === record?.name) await putClip({ ...current, ...snapshot });
+      if (getState()?.pads[target]?.clip?.take !== loaded) return;
+      await updateClip(target, (current) => (current.channels[0].length === frames ? snapshot : null));
     }, SAVE_DELAY_MS);
   }
 
@@ -583,7 +670,11 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
     start = clip?.start ?? found.start ?? 0;
     end = clip?.end ?? found.end ?? duration;
     chops = cleanChops(found.chops ?? [], start, end);
-    title.replaceChildren(h('strong', { textContent: `Editing ${padLabel(next)}` }), h('span', { className: 'pad-clip', textContent: found.name, title: found.name }));
+    name.set(getState()?.pads[next]?.clip?.name ?? found.name);
+    title.replaceChildren(titleLabel, name.el);
+    pitchPanel.hidden = false;
+    const state = getState();
+    if (state) updatePitch(state);
     updateReadout();
     draw();
   }
@@ -595,9 +686,11 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
     index = next;
     record = null;
     data = null;
-    clipKey = JSON.stringify([getState()?.pads[next]?.clip?.name, getState()?.pads[next]?.clip?.duration]);
-    title.replaceChildren(h('strong', { textContent: `Editing ${padLabel(next)}` }), h('span', { className: 'dim', textContent: 'Loading…' }));
+    take = getState()?.pads[next]?.clip?.take ?? null;
+    titleLabel.textContent = `Editing ${padLabel(next)}`;
+    title.replaceChildren(titleLabel, h('span', { className: 'dim', textContent: 'Loading…' }));
     readout.replaceChildren();
+    pitchPanel.hidden = true;
     el.hidden = false;
     load(next);
   }
@@ -622,8 +715,15 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
       close();
       return;
     }
-    const key = JSON.stringify([clip.name, clip.duration]);
-    if (key !== clipKey) open(index);
+    if (clip.take !== take) {
+      open(index);
+      return;
+    }
+    if (record) {
+      record.name = clip.name;
+      name.set(clip.name);
+      updatePitch(state);
+    }
     // Pressing the pad stops the editor's preview in the engine, so follow the pad from here.
     const playing = Boolean(state.pads[index].playing);
     if (playing && !padPlaying) halt();

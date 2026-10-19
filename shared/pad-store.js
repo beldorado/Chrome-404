@@ -70,6 +70,26 @@ export function getAllClips() {
   return run('readonly', (store) => store.getAll());
 }
 
+export async function updateClip(index, change) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const request = store.get(index);
+    let result = null;
+    request.onsuccess = () => {
+      const record = request.result;
+      const changes = record?.channels?.length ? change(record) : null;
+      if (!changes) return;
+      result = { ...record, ...changes };
+      store.put(result);
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
 export function deleteClip(index) {
   return run('readwrite', (store) => store.delete(index));
 }

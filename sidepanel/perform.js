@@ -5,7 +5,7 @@ import { BANKS, BUS_IDS, BUS_LABELS, CHOKE_GROUPS, PADS_PER_BANK, PAD_MODES, REC
 import { ctrlParams, getEffect } from '../effects/registry.js';
 import { clamp, formatValue } from '../shared/params.js';
 import { BPM_MAX, BPM_MIN } from '../shared/tempo.js';
-import { confirmButton, fillEffectOptions, holdButton, routeSelect, setFill } from './widgets.js';
+import { confirmButton, fillEffectOptions, holdButton, nameField, routeSelect, setFill } from './widgets.js';
 import { KEY_LABELS } from './keys.js';
 import { exportPad, importSample } from './pad-files.js';
 import { createEditor } from './editor.js';
@@ -541,9 +541,10 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       )
     );
     const follow = h('input', { type: 'checkbox', disabled: !timed.length, onchange: (e) => send(MSG.UPDATE_PAD, { indices, changes: { sync: e.target.checked } }) });
+    const pitchNote = (pad) => (pad.stretch === 'Stretch' ? 'It keeps its pitch (Stretch, set in Edit / chop).' : 'Pitch follows, like a turntable (Vinyl, set in Edit / chop).');
     let followTitle = "Type this sample's BPM to use this";
-    if (single?.clip?.bpm) followTitle = `Speeds the loop up or down from ${Math.round(single.clip.bpm)} BPM to match the tempo. Pitch follows, like a turntable.`;
-    else if (!single) followTitle = timed.length ? 'Speeds each pad up or down from its own BPM to match the tempo. Pitch follows, like a turntable.' : "Type the samples' BPM to use this";
+    if (single?.clip?.bpm) followTitle = `Speeds the loop up or down from ${Math.round(single.clip.bpm)} BPM to match the tempo. ${pitchNote(single)}`;
+    else if (!single) followTitle = timed.length ? 'Speeds each pad up or down from its own BPM to match the tempo. Vinyl pads change pitch with it, Stretch pads keep theirs.' : "Type the samples' BPM to use this";
     const tempo = h('input', {
       type: 'number',
       min: BPM_MIN,
@@ -635,8 +636,16 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       confirmLabel: 'Clear pad?',
       onConfirm: () => send(MSG.CLEAR_PAD, { index })
     });
+    const name = nameField({
+      label: `Pad ${padLabel(index)} name`,
+      onCommit: (value) => {
+        send(MSG.SET_PAD_NAME, { index, name: value });
+        flash('Name', value);
+      }
+    });
+    name.set(pad.clip.name);
     detail.replaceChildren(
-      h('p', { className: 'pad-title' }, h('strong', { textContent: `Pad ${padLabel(index)}` }), h('span', { className: 'pad-clip', textContent: pad.clip.name, title: pad.clip.name }), h('span', { className: 'dim', dataset: { role: 'pad-length' }, textContent: seconds(pad.clip.end - pad.clip.start) })),
+      h('p', { className: 'pad-title' }, h('strong', { textContent: `Pad ${padLabel(index)}` }), name.el, h('span', { className: 'dim', dataset: { role: 'pad-length' }, textContent: seconds(pad.clip.end - pad.clip.start) })),
       modes,
       options,
       h('div', { className: 'pad-tools' }, edit, load, exportBtn, clear)
@@ -792,7 +801,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       ctrlKey = nextCtrl;
       renderCtrl(state);
     }
-    const nextDetail = JSON.stringify([selectedPad, selectedPads().map((i) => [i, state.pads[i].clip?.name, state.pads[i].clip?.duration, Boolean(state.pads[i].clip?.bpm)])]);
+    const nextDetail = JSON.stringify([selectedPad, selectedPads().map((i) => [i, state.pads[i].clip?.take, state.pads[i].clip?.name, Boolean(state.pads[i].clip?.bpm), state.pads[i].stretch])]);
     if (nextDetail !== detailKey) {
       detailKey = nextDetail;
       renderDetail(state);

@@ -11,14 +11,22 @@ import {
   PADS_PER_BANK,
   PAD_COUNT,
   PAD_MODES,
+  PAD_NAME_MAX,
   PAD_TRANSFERS,
+  PITCH_RANGE,
   REC_LENGTHS,
   ROUTES,
   SOURCE_LEVEL_MAX,
+  SPEED_MAX,
+  SPEED_MIN,
+  STRETCH_MODES,
   defaultPad,
   defaultState,
   migratePadIndex,
-  settingsFrom
+  padPitch,
+  padRate,
+  settingsFrom,
+  takeName
 } from '../shared/state.js';
 import { defaultParams, getEffect, isAvailable, isQuantized } from '../effects/registry.js';
 import { clamp, fromNormalized, sanitizeParam, toNormalized } from '../shared/params.js';
@@ -59,6 +67,7 @@ export class AudioEngine {
     this.slotCounter = 0;
     this.lfos = new Map();
     this.origin = 0;
+    this.takeCounter = 0;
 
     this.buses = Object.fromEntries(BUS_IDS.map((id) => [id, new Bus(ctx, id)]));
     this.dry = ctx.createGain();
@@ -85,6 +94,10 @@ export class AudioEngine {
 
   async startTempoDetection() {
     this.tempo ??= await TempoDetector.create(this.ctx, this.analysisIn, (estimate) => this.handleTempo(estimate));
+  }
+
+  async startPads() {
+    await this.pads.enableStretch();
   }
 
   async startRecorder() {
@@ -455,7 +468,7 @@ export class AudioEngine {
     if (next !== this.state.bpm) this.setGrid(rebase(this.ctx.currentTime, this.origin, this.state.bpm, next));
     this.state.bpm = next;
     for (const bus of Object.values(this.buses)) bus.setTempo(next);
-    for (let i = 0; i < PAD_COUNT; i++) this.pads.setRate(i, this.padRate(i));
+    for (let i = 0; i < PAD_COUNT; i++) this.applyRate(i);
     this.emit();
   }
 
@@ -467,8 +480,22 @@ export class AudioEngine {
   }
 
   padRate(index) {
+    return padRate(this.state.pads[index], this.state.bpm);
+  }
+
+  padVoices(index) {
+    return this.pads.previewOf === index ? [index, 'preview'] : [index];
+  }
+
+  applyRate(index) {
+    const rate = this.padRate(index);
+    for (const voice of this.padVoices(index)) this.pads.setRate(voice, rate);
+  }
+
+  applyStretch(index) {
     const pad = this.state.pads[index];
-    return pad.sync && pad.clip?.bpm ? this.state.bpm / pad.clip.bpm : 1;
+    const style = { pitch: padPitch(pad), stretch: pad.stretch === 'Stretch' };
+    for (const voice of this.padVoices(index)) this.pads.restyle(voice, style);
   }
 
   region(duration, start, end) {
@@ -483,8 +510,17 @@ export class AudioEngine {
     this.pads.setBuffer(index, buffer);
     pad.playing = false;
     const region = this.region(buffer.duration, start, end);
-    pad.clip = { name: String(name), bpm: Number(bpm) > 0 ? Number(bpm) : null, duration: buffer.duration, ...region, ...waveOf(buffer, undefined, region.start, region.end) };
+    pad.clip = { name: String(name), bpm: Number(bpm) > 0 ? Number(bpm) : null, take: ++this.takeCounter, duration: buffer.duration, ...region, ...waveOf(buffer, undefined, region.start, region.end) };
     this.emit();
+  }
+
+  setPadName(index, name) {
+    const pad = this.state.pads[index];
+    const next = String(name ?? '').trim().slice(0, PAD_NAME_MAX);
+    if (!pad?.clip || !next) return undefined;
+    pad.clip.name = next;
+    this.emit();
+    return next;
   }
 
   setPadRegion(index, start, end) {
@@ -501,8 +537,8 @@ export class AudioEngine {
     const valid = (i) => Number.isInteger(i) && i >= 0 && i < PAD_COUNT;
     if (!valid(from) || !valid(to) || from === to || !PAD_TRANSFERS.includes(mode) || !this.state.pads[from].clip) return false;
     const take = (i) => {
-      const { clip, mode: playMode, level, sync, choke } = this.state.pads[i];
-      return { buffer: this.pads.buffers[i], clip: clip && { ...clip }, settings: { mode: playMode, level, sync, choke } };
+      const { clip, mode: playMode, level, sync, choke, speed, pitch, stretch } = this.state.pads[i];
+      return { buffer: this.pads.buffers[i], clip: clip && { ...clip }, settings: { mode: playMode, level, sync, choke, speed, pitch, stretch } };
     };
     const place = (i, { buffer, clip, settings }) => {
       this.stopPad(i);
@@ -512,11 +548,11 @@ export class AudioEngine {
     };
     const source = take(from);
     const target = take(to);
-    const { mode: playMode, level, sync, choke } = defaultPad();
+    const { mode: playMode, level, sync, choke, speed, pitch, stretch } = defaultPad();
     this.batch(() => {
       place(to, source);
       if (mode === 'swap') place(from, target);
-      else if (mode === 'move') place(from, { buffer: null, clip: null, settings: { mode: playMode, level, sync, choke } });
+      else if (mode === 'move') place(from, { buffer: null, clip: null, settings: { mode: playMode, level, sync, choke, speed, pitch, stretch } });
     });
     return true;
   }
@@ -525,7 +561,7 @@ export class AudioEngine {
     const pad = this.state.pads[index];
     if (!pad?.clip) return undefined;
     pad.clip.bpm = Number(bpm) > 0 ? clampBpm(bpm) : null;
-    this.pads.setRate(index, this.padRate(index));
+    this.applyRate(index);
     this.emit();
     return pad.clip.bpm;
   }
@@ -536,7 +572,8 @@ export class AudioEngine {
     const region = this.region(buffer.duration, start, end);
     // One voice per pad: hearing it in the editor takes over from the pad.
     this.stopPad(index);
-    return this.pads.preview(index, { offset: region.start, duration: region.end - region.start });
+    const pad = this.state.pads[index];
+    return this.pads.preview(index, { offset: region.start, duration: region.end - region.start, rate: this.padRate(index), pitch: padPitch(pad), stretch: pad.stretch === 'Stretch' });
   }
 
   stopPreview() {
@@ -551,11 +588,11 @@ export class AudioEngine {
     const pad = this.state.pads[index];
     if (!pad) return;
     this.pads.setBuffer(index, null);
-    Object.assign(pad, { clip: null, playing: false });
+    Object.assign(pad, { clip: null, playing: false, speed: 1, pitch: 0 });
     this.emit();
   }
 
-  updatePad(index, { mode, level, sync, choke } = {}) {
+  updatePad(index, { mode, level, sync, choke, speed, pitch, stretch } = {}) {
     const pad = this.state.pads[index];
     if (!pad) return;
     if (PAD_MODES.includes(mode) && mode !== pad.mode) {
@@ -566,10 +603,12 @@ export class AudioEngine {
       pad.level = clamp(Number(level), 0, SOURCE_LEVEL_MAX);
       this.pads.setLevel(index, pad.level);
     }
-    if (typeof sync === 'boolean') {
-      pad.sync = sync;
-      this.pads.setRate(index, this.padRate(index));
-    }
+    if (typeof sync === 'boolean') pad.sync = sync;
+    if (speed !== undefined && Number.isFinite(Number(speed))) pad.speed = clamp(Number(speed), SPEED_MIN, SPEED_MAX);
+    if (typeof sync === 'boolean' || speed !== undefined) this.applyRate(index);
+    if (pitch !== undefined && Number.isFinite(Number(pitch))) pad.pitch = clamp(Number(pitch), -PITCH_RANGE, PITCH_RANGE);
+    if (STRETCH_MODES.includes(stretch)) pad.stretch = stretch;
+    if (pitch !== undefined || stretch !== undefined) this.applyStretch(index);
     if (CHOKE_GROUPS.includes(Number(choke))) pad.choke = Number(choke);
     this.emit();
   }
@@ -596,7 +635,16 @@ export class AudioEngine {
     const when = loop && quantize !== 'Off' ? nextBoundary(this.ctx.currentTime, this.origin, this.state.bpm, quantize) : 0;
     this.chokeOthers(index, when);
     if (this.pads.previewOf === index) this.stopPreview();
-    pad.playing = this.pads.start(index, { loop, when, rate: this.padRate(index), level: pad.level, offset: pad.clip.start, duration: pad.clip.end - pad.clip.start });
+    pad.playing = this.pads.start(index, {
+      loop,
+      when,
+      rate: this.padRate(index),
+      pitch: padPitch(pad),
+      stretch: pad.stretch === 'Stretch',
+      level: pad.level,
+      offset: pad.clip.start,
+      duration: pad.clip.end - pad.clip.start
+    });
     this.emit();
   }
 
@@ -678,8 +726,7 @@ export class AudioEngine {
         offset += part.length;
       }
     });
-    const name = rec.length === 'Free' ? `${(length / sampleRate).toFixed(1)} s at ${Math.round(rec.bpm)} BPM` : `${rec.length} at ${Math.round(rec.bpm)} BPM`;
-    const meta = { name, bpm: rec.bpm };
+    const meta = { name: takeName(), bpm: rec.bpm };
     this.setPadClip(rec.pad, buffer, meta);
     this.onClip(rec.pad, buffer, meta);
   }
@@ -741,8 +788,8 @@ export class AudioEngine {
       (saved.pads ?? []).forEach((pad, i) => {
         const index = perBank === PADS_PER_BANK ? i : migratePadIndex(i, perBank);
         if (!pad || index < 0 || index >= PAD_COUNT) return;
-        const { mode, level, sync, choke } = { ...defaultPad(), ...pad };
-        this.updatePad(index, { mode, level, sync: Boolean(sync), choke });
+        const { mode, level, sync, choke, speed, pitch, stretch } = { ...defaultPad(), ...pad };
+        this.updatePad(index, { mode, level, sync: Boolean(sync), choke, speed, pitch, stretch });
       });
     });
   }

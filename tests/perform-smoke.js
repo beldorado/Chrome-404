@@ -7,7 +7,7 @@ import { HoldKeys, actionFor } from '../sidepanel/keys.js';
 import { PRESETS } from '../engine/presets.js';
 import { FOUR_ON_FLOOR, RATE, drumLoop, sineBuffer } from './signals.js';
 import { cleanChops, detectTransients, equalChops, extractSlice, slicesFrom, snapTime, truncateClip } from '../shared/chop.js';
-import { PAD_COUNT, PADS_PER_BANK, migratePadIndex, padLabel, presetFrom } from '../shared/state.js';
+import { PAD_COUNT, PADS_PER_BANK, migratePadIndex, padLabel, presetFrom, settingsFrom, takeName } from '../shared/state.js';
 import { getAllClips, padMoves } from '../shared/pad-store.js';
 import { migrateMidiMap } from '../sidepanel/midi.js';
 import { freePadsAfter } from '../sidepanel/editor.js';
@@ -327,6 +327,97 @@ async function padTests() {
   );
 }
 
+const TAKE_NAME = /^\d\d:\d\d:\d\d, [A-Z][a-z]{2} \d{1,2}$/;
+
+function sounding(x, from, threshold = 0.05) {
+  let first = -1;
+  let last = -1;
+  for (let i = Math.round(from * RATE); i < x.length; i++) {
+    if (Math.abs(x[i]) <= threshold) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  return { first, seconds: first < 0 ? 0 : (last - first) / RATE };
+}
+
+function pitchOf(x, first, candidates) {
+  const body = x.subarray(first + Math.round(0.1 * RATE), first + Math.round(0.4 * RATE));
+  const levels = candidates.map((f) => tone(body, f));
+  return candidates[levels.indexOf(Math.max(...levels))];
+}
+
+async function stretchTests() {
+  const shot = async (changes, { seconds = 1.6, clip = 1, bpm = null, at = [] } = {}) => {
+    const s = await session({
+      seconds,
+      signal: null,
+      setup: async (e, ctx) => {
+        await e.startPads();
+        e.setQuantize('Off');
+        e.setPadClip(0, sineBuffer(ctx, 220, clip, 0.5), { name: 'tone', bpm });
+        e.updatePad(0, { mode: 'One-shot', ...changes });
+      },
+      at: [[0.1, (e) => e.padPress(0)], ...at]
+    });
+    return { ...s, ...sounding(s.l, 0.1) };
+  };
+  const CANDIDATES = [110, 146.83, 164.81, 220, 293.66, 329.63, 440];
+  const vinyl = await shot({});
+  const held = await shot({ stretch: 'Stretch' });
+  const aligned = held.first >= 0 && vinyl.first >= 0 ? maxDiff(vinyl.l.subarray(vinyl.first, vinyl.first + RATE * 0.9), held.l.subarray(held.first, held.first + RATE * 0.9)) : 1;
+  check('Stretch at 100% and 0 st sounds the same as Vinyl', aligned < 1e-4 && near(held.seconds, 1, 0.01), `max diff ${aligned.toExponential(2)}, ${held.seconds.toFixed(3)} s`);
+
+  const fast = await shot({ speed: 2 });
+  check('Vinyl at 200% plays in half the time an octave up', near(fast.seconds, 0.5, 0.01) && pitchOf(fast.l, fast.first, CANDIDATES) === 440, `${fast.seconds.toFixed(3)} s, ${pitchOf(fast.l, fast.first, CANDIDATES)} Hz`);
+  const quick = await shot({ speed: 2, stretch: 'Stretch' });
+  check('Stretch at 200% plays in half the time at the same pitch', near(quick.seconds, 0.5, 0.03) && pitchOf(quick.l, quick.first, CANDIDATES) === 220, `${quick.seconds.toFixed(3)} s, ${pitchOf(quick.l, quick.first, CANDIDATES)} Hz`);
+  const slow = await shot({ speed: 0.5, stretch: 'Stretch' }, { seconds: 2.6 });
+  check('Stretch at 50% plays twice as long at the same pitch', near(slow.seconds, 2, 0.03) && pitchOf(slow.l, slow.first, CANDIDATES) === 220, `${slow.seconds.toFixed(3)} s, ${pitchOf(slow.l, slow.first, CANDIDATES)} Hz`);
+  const up = await shot({ pitch: 12, stretch: 'Stretch' });
+  check('Stretch +12 st plays an octave up in the same time', near(up.seconds, 1, 0.03) && pitchOf(up.l, up.first, CANDIDATES) === 440, `${up.seconds.toFixed(3)} s, ${pitchOf(up.l, up.first, CANDIDATES)} Hz`);
+  const fifth = await shot({ speed: Math.pow(2, 7 / 12) });
+  check('Vinyl at +7 st worth of speed lands on the fifth', pitchOf(fifth.l, fifth.first, CANDIDATES) === 329.63, `${pitchOf(fifth.l, fifth.first, CANDIDATES)} Hz`);
+  const follow = await shot({ stretch: 'Stretch', pitch: -5 }, { bpm: 60 });
+  check('Follow BPM in Stretch keeps the pitch you set (60 → 120 BPM, −5 st)', near(follow.seconds, 0.5, 0.03) && pitchOf(follow.l, follow.first, CANDIDATES) === 164.81, `${follow.seconds.toFixed(3)} s, ${pitchOf(follow.l, follow.first, CANDIDATES)} Hz`);
+  check('A stretched one-shot reports stopped when it ends', follow.engine.state.pads[0].playing === false, `playing ${follow.engine.state.pads[0].playing}`);
+
+  const loop = await session({
+    seconds: 3,
+    signal: null,
+    setup: async (e, ctx) => {
+      await e.startPads();
+      e.setQuantize('Off');
+      e.setPadClip(0, sineBuffer(ctx, 220, 0.5, 0.5), { name: 'tone' });
+      e.updatePad(0, { mode: 'Loop', stretch: 'Stretch', speed: 0.5 });
+    },
+    at: [
+      [0.1, (e) => e.padPress(0)],
+      [1.5, (e) => e.updatePad(0, { stretch: 'Vinyl' })]
+    ]
+  });
+  const looped = segment(loop.l, 0.6, 1.4);
+  check('A stretched loop keeps looping at its own pitch', rms(looped) > 0.25 && pitchOf(loop.l, Math.round(0.6 * RATE), CANDIDATES) === 220, `rms ${rms(looped).toFixed(3)}`);
+  const swapped = segment(loop.l, 1.6, 2.9);
+  check('Switching a playing loop to Vinyl carries on without a gap, now pitched down', rms(swapped) > 0.25 && pitchOf(loop.l, Math.round(1.7 * RATE), CANDIDATES) === 110, `rms ${rms(swapped).toFixed(3)}, ${pitchOf(loop.l, Math.round(1.7 * RATE), CANDIDATES)} Hz`);
+
+  const e = loop.engine;
+  e.updatePad(0, { speed: 1.25, pitch: 3, stretch: 'Stretch' });
+  const saved = settingsFrom(e.state).pads[0];
+  check('Speed, pitch and stretch are saved with the pad settings', saved.speed === 1.25 && saved.pitch === 3 && saved.stretch === 'Stretch', JSON.stringify(saved));
+  e.updatePad(0, { speed: 9, pitch: -40, stretch: 'Warp' });
+  check('Speed and pitch stay in range and unknown stretch modes are ignored', e.state.pads[0].speed === 2 && e.state.pads[0].pitch === -12 && e.state.pads[0].stretch === 'Stretch', `${e.state.pads[0].speed} / ${e.state.pads[0].pitch} / ${e.state.pads[0].stretch}`);
+  e.transferPad(0, 5, 'copy');
+  check('Copying a pad carries its speed, pitch and stretch', e.state.pads[5].speed === 2 && e.state.pads[5].pitch === -12 && e.state.pads[5].stretch === 'Stretch', `${e.state.pads[5].speed} / ${e.state.pads[5].pitch}`);
+  e.clearPad(5);
+  check('Clearing a pad resets speed and pitch', e.state.pads[5].speed === 1 && e.state.pads[5].pitch === 0, `${e.state.pads[5].speed} / ${e.state.pads[5].pitch}`);
+
+  const take = e.state.pads[0].clip.take;
+  check('Renaming a pad trims the name and keeps the sample', e.setPadName(0, '  Amen break  ') === 'Amen break' && e.state.pads[0].clip.name === 'Amen break' && e.state.pads[0].clip.take === take, e.state.pads[0].clip.name);
+  check('A blank name or an empty pad is refused', e.setPadName(0, '   ') === undefined && e.state.pads[0].clip.name === 'Amen break' && e.setPadName(9, 'x') === undefined, 'refused');
+  check('Names are capped at 40 characters', e.setPadName(0, 'x'.repeat(60)).length === 40, '40');
+  check('Recording names read time first, then the date', takeName(new Date(2026, 9, 19, 9, 5, 7)) === '09:05:07, Oct 19', takeName(new Date(2026, 9, 19, 9, 5, 7)));
+}
+
 async function waitFor(fn, ms = 2000) {
   const start = performance.now();
   while (!fn() && performance.now() - start < ms) await wait(20);
@@ -356,7 +447,7 @@ async function recordTests() {
   check('Resample of 1 bar at 120 BPM is exactly 2.000 s', clip && clip.buffer.length === 2 * RATE, `${clip?.buffer.length} frames`);
   const diff = clip ? maxDiff(clip.buffer.getChannelData(0), segment(rec.l, 2, 4)) : 1;
   check('Resample is sample-identical to the master output from 2.0 to 4.0 s', diff < 1e-6, `max diff ${diff.toExponential(2)}`);
-  check('Resampled pad is named and tagged with its BPM', rec.engine.state.pads[0].clip?.name === '1 bar at 120 BPM' && rec.engine.state.pads[0].clip?.bpm === 120, JSON.stringify(rec.engine.state.pads[0].clip?.name));
+  check('Resampled pad is named after the time it was recorded and tagged with its BPM', TAKE_NAME.test(rec.engine.state.pads[0].clip?.name) && rec.engine.state.pads[0].clip?.bpm === 120, JSON.stringify(rec.engine.state.pads[0].clip?.name));
 
   const free = await session({
     seconds: 1.5,
@@ -778,6 +869,7 @@ async function run() {
   await memoryTests();
   await deckTests();
   await padTests();
+  await stretchTests();
   await chokeTests();
   await routingTests();
   await presetTests();

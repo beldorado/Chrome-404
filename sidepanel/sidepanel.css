@@ -1773,7 +1773,113 @@ body.learning .pad {
   padding: 6px 9px;
 }
 
+.name-field {
+  width: 100%;
+  min-width: 0;
+  margin: -2px 0;
+  padding: 1px 4px;
+  font: inherit;
+  color: var(--text);
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: color-mix(in srgb, var(--dim) 30%, transparent);
+  border-radius: 4px;
+  cursor: text;
+}
+
+.name-field:hover {
+  border-color: var(--edge);
+}
+
+.name-field:focus {
+  background: var(--recess);
+  border-color: color-mix(in srgb, var(--pad) 65%, var(--edge));
+  outline: none;
+}
+
+.editor-pitch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  align-items: center;
+  padding: 6px 10px 6px 6px;
+  background: var(--plate);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.pitch-knobs {
+  display: flex;
+  align-items: flex-start;
+}
+
+.pitch-knobs .knob {
+  width: 56px;
+}
+
+.pitch-link {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 52px;
+}
+
+.pitch-link::before,
+.pitch-link::after {
+  content: "";
+  position: absolute;
+  top: 25px;
+  width: calc(50% + 10px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--pad);
+  transition: width 160ms ease, background-color 160ms ease;
+}
+
+.pitch-link::before {
+  left: -10px;
+}
+
+.pitch-link::after {
+  right: -10px;
+}
+
+.editor-pitch[data-stretch="Stretch"] .pitch-link::before,
+.editor-pitch[data-stretch="Stretch"] .pitch-link::after {
+  width: 10px;
+  background: var(--edge);
+}
+
+.pitch-mode {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seg-pair {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.pitch-hint,
+.pitch-plays {
+  margin: 0;
+  font-size: 12px;
+}
+
+.pitch-plays {
+  color: var(--text);
+}
+
 @media (max-width: 359px) {
+  .editor-pitch {
+    grid-template-columns: 1fr;
+  }
+
+  .pitch-knobs {
+    justify-content: center;
+  }
+
   .fx-row {
     grid-template-columns: repeat(3, 1fr);
   }

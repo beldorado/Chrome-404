@@ -2,7 +2,7 @@ import { AudioEngine } from '../engine/engine.js';
 import { PRESETS } from '../engine/presets.js';
 import { loadWorklets } from '../effects/registry.js';
 import { MSG, TARGET } from '../shared/messages.js';
-import { bufferFromRecord, clipRecord, deleteClip, getAllClips, getClip, putClip } from '../shared/pad-store.js';
+import { bufferFromRecord, clipRecord, deleteClip, getAllClips, getClip, putClip, updateClip } from '../shared/pad-store.js';
 import { PAD_COUNT } from '../shared/state.js';
 
 const METER_INTERVAL_MS = 80;
@@ -33,6 +33,7 @@ const ready = (async () => {
   await loadWorklets(ctx);
   await engine.startTempoDetection();
   await engine.startRecorder();
+  await engine.startPads();
   const saved = await chrome.runtime.sendMessage({ target: TARGET.BACKGROUND, type: MSG.ENGINE_READY }).catch(() => null);
   engine.applySettings(saved);
   await restorePads().catch(reportError);
@@ -70,10 +71,15 @@ async function setPadBpm(message) {
   const values = new Map();
   engine.batch(() => padIndices(message).forEach((i) => values.set(i, engine.setPadBpm(i, message.bpm))));
   for (const [index, value] of values) {
-    if (value === undefined) continue;
-    const record = await getClip(index);
-    if (record?.channels?.length) await putClip({ ...record, bpm: value });
+    if (value !== undefined) await updateClip(index, () => ({ bpm: value }));
   }
+}
+
+async function setPadName({ index, name }) {
+  const value = engine.setPadName(index, name);
+  if (value === undefined) throw new Error('That pad has no sample to rename.');
+  await updateClip(index, () => ({ name: value }));
+  return value;
 }
 
 async function transferPad({ from, to, mode }) {
@@ -132,6 +138,7 @@ const handlers = {
   [MSG.STOP_RECORDING]: () => engine.stopRecording(),
   [MSG.SET_PAD_REGION]: ({ index, start, end }) => engine.setPadRegion(index, start, end),
   [MSG.SET_PAD_BPM]: setPadBpm,
+  [MSG.SET_PAD_NAME]: setPadName,
   [MSG.TRANSFER_PAD]: transferPad,
   [MSG.STOP_PAD]: ({ index }) => engine.stopPad(index),
   [MSG.PREVIEW]: async ({ index, start, end }) => {

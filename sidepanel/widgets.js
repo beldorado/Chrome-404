@@ -1,6 +1,6 @@
 import { h } from './dom.js';
 import { listEffects } from '../effects/registry.js';
-import { ROUTES, ROUTE_LABELS } from '../shared/state.js';
+import { PAD_NAME_MAX, ROUTES, ROUTE_LABELS } from '../shared/state.js';
 import { clamp } from '../shared/params.js';
 
 export function fillEffectOptions(select, busId, placeholder = null) {
@@ -72,4 +72,34 @@ export function confirmButton(el, { label, confirmLabel, onConfirm, ms = 3000 })
   });
   el.addEventListener('blur', reset);
   return el;
+}
+
+export function nameField({ label, onCommit }) {
+  let committed = '';
+  const el = h('input', { type: 'text', className: 'name-field', maxLength: PAD_NAME_MAX, spellcheck: false, autocomplete: 'off', 'aria-label': label, title: 'Click to rename. Enter saves, Esc cancels.' });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') el.blur();
+    else if (e.key === 'Escape') {
+      el.value = committed;
+      el.blur();
+    }
+  });
+  el.addEventListener('focus', () => el.select());
+  el.addEventListener('blur', () => {
+    const next = el.value.trim();
+    if (!next || next === committed) {
+      el.value = committed;
+      return;
+    }
+    committed = next;
+    el.value = next;
+    onCommit(next);
+  });
+  return {
+    el,
+    set(value) {
+      committed = value;
+      if (document.activeElement !== el) el.value = value;
+    }
+  };
 }

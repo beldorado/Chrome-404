@@ -18,17 +18,18 @@ The panel opens on **Perform**, laid out like the hardware:
 - **CTRL knobs**: the three main controls of the selected bus's effect. Pick or swap the effect from the menu above them. Buses with a chain show a chip for each effect so you can choose which one the knobs control.
 - **Bus FX buttons** (keys 1–6): tap to switch a bus on or off, or hold to play it only while held. Each bus remembers the last settings of every effect you've used on it.
 - **Pads** (keys Q W E R / A S D F / Z X C V play the visible bank, laid out like the pads): 12 pads per bank in Loop, Gate or One-shot mode. Loops start on the grid. The menu above the pads picks where they play: Bus 1, Bus 2, or dry into Bus 3. A pad lights in the colour of the bus it plays into.
-- **Rec** (key T): resamples what you hear into the selected empty pad (or the next empty one). It records 1, 2 or 4 bars starting on the next bar, or runs until you stop it (up to 60 seconds). Recordings know their BPM and can follow tempo changes. For a loaded sample, type its BPM in the pad's BPM box to let it follow too.
+- **Rec** (key T): resamples what you hear into the selected empty pad (or the next empty one). It records 1, 2 or 4 bars starting on the next bar, or runs until you stop it (up to 60 seconds). Recordings are named with the time they were recorded (like "14:32:07, Oct 19"), know their BPM and can follow tempo changes. For a loaded sample, type its BPM in the pad's BPM box to let it follow too.
 - **Banks** (key B): two banks of 12 pads, A1–A12 and B1–B12.
 - **Selecting pads**: Shift+click selects a pad without playing it. Ctrl+click (Cmd+click on a Mac) adds or removes pads without playing them. With several selected, mode, Follow BPM, BPM, choke group and level apply to all of them, a field shows Mixed where they differ, and Clear empties every selected pad. Click a tag in the pad panel to take that pad out, or click any pad to go back to it alone.
 - **Moving pads**: drag a pad onto another pad, then choose Move, Copy or Cancel (plus Swap if the target already holds a sample). The sample goes with its trim, chops, BPM and pad settings, and Move leaves the source pad empty. Hold Shift while you drag so the pad doesn't play. A plain drag stops the pad once the drag starts. To reach the other bank, hover the A/B switch for half a second, or press B while dragging. Esc cancels.
 - **Choke groups**: put pads in the same group (1–4) and starting one cuts off any other pad in that group, like an open and closed hi-hat. A quantized loop cuts the others on the beat it starts. The group shows on the pad as G1–G4.
-- **Pad tools**: load an audio file (or drop one onto a pad; the first 60 seconds are kept), export a pad as a 16-bit WAV, or clear it (click twice). Pads are kept between sessions.
+- **Pad tools**: load an audio file (or drop one onto a pad; the first 60 seconds are kept), export a pad as a 16-bit WAV, or clear it (click twice). Click the sample's name in the pad panel or the editor to rename it (Enter saves, Esc cancels). Pads are kept between sessions.
 - **Edit / chop**: a waveform editor for the selected pad.
   - Drag **S** and **E** to trim. This doesn't change the audio, Reset trim brings back the whole sample, and it's saved as you go. **Truncate** (click twice) cuts the sample down to S–E for good, keeping the pad's settings and chops.
   - Add chops with Split evenly (2–16), Find hits (drum hits and note starts), a double-click, or by tapping **G** in time while it plays. The playhead follows the pad too, so you can play the pad in its own mode (Loop, Gate or One-shot) and chop along with it.
   - Shift+scroll zooms in and out around the mouse, and Alt+scroll zooms the amplitude so quiet parts are easier to chop. While zoomed in, hold the scroll wheel down and drag the waveform to move along it, or drag the bar under it (or scroll sideways on a trackpad). Shift+double-click resets the time zoom and Alt+double-click resets the amplitude. Shift and Alt clicks don't play or add chops.
   - Click a slice to hear it. Drag a chop line to move it and double-click it to remove it. Chops and trim points snap to the nearest zero crossing so slices start and end without a click. Turn off **Snap to zero crossings** to place them exactly.
+  - **Speed** (50–200%) and **Pitch** (±12 semitones, Shift for fine steps, double-click to reset) set how the pad plays, and you hear changes live. **Vinyl** links them like a turntable: faster is higher, and Follow BPM changes the pitch too. **Stretch** keeps them apart, so speed and Follow BPM change the tempo without changing the pitch, and Pitch transposes without changing the length. Clearing a pad resets its speed and pitch.
   - **Send slices to pads** puts each slice on its own empty pad (the ones after the source, wrapping round to the start) as a One-shot with tiny fades at each edge.
 - **Sources**: each captured tab gets a level fader, a mute button, a route (Bus 1, Bus 2, or dry into Bus 3) and an In FX switch that sends it through Input FX first. Put sources on side A or B to mix them with the crossfader.
 
@@ -70,7 +71,7 @@ Keys 1–6 are the bus FX buttons. The pads are the 4×3 block Q W E R / A S D F
 |---|---|
 | `background.js` | Service worker: capture, offscreen document, settings storage |
 | `offscreen/` | Hosts the `AudioContext` and engine, routes messages, stores pads in IndexedDB |
-| `engine/` | `AudioEngine`, buses, slots, pads, tempo detection, recorder |
+| `engine/` | `AudioEngine`, buses, slots, pads and their time-stretch worklet, tempo detection, recorder |
 | `effects/` | Effect definitions, `registry.js` (CTRL knobs, quantized effects), AudioWorklets |
 | `shared/` | State shape, messages, beat grid, params, LFO, tempo and hit detection, chopping, WAV, pad storage |
 | `sidepanel/` | UI: `perform.js` (Perform view), `editor.js` (chop editor), `presets.js` (saved presets), `sidepanel.js` (shell + Edit view), keys, MIDI |

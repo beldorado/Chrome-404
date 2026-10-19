@@ -55,12 +55,38 @@ export const BUS_ROUTINGS = ['Parallel', 'Series'];
 
 export const PAD_TRANSFERS = ['move', 'copy', 'swap'];
 
+export const STRETCH_MODES = ['Vinyl', 'Stretch'];
+
+export const SPEED_MIN = 0.5;
+
+export const SPEED_MAX = 2;
+
+export const PITCH_RANGE = 12;
+
+export const PAD_NAME_MAX = 40;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function takeName(date = new Date()) {
+  const two = (n) => String(n).padStart(2, '0');
+  return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}, ${MONTHS[date.getMonth()]} ${date.getDate()}`;
+}
+
+export function padRate(pad, bpm) {
+  const follow = pad.sync && pad.clip?.bpm ? bpm / pad.clip.bpm : 1;
+  return follow * (pad.speed ?? 1);
+}
+
+export function padPitch(pad) {
+  return pad.stretch === 'Stretch' ? Math.pow(2, (pad.pitch ?? 0) / 12) : 1;
+}
+
 export function defaultBus() {
   return { engaged: true, slots: [] };
 }
 
 export function defaultPad() {
-  return { mode: 'Loop', level: 1, sync: true, choke: 0, clip: null, playing: false };
+  return { mode: 'Loop', level: 1, sync: true, choke: 0, speed: 1, pitch: 0, stretch: 'Vinyl', clip: null, playing: false };
 }
 
 export function defaultState() {
@@ -107,6 +133,6 @@ export function settingsFrom({ bpm, autoBpm, quantize, master, inputRoute, padRo
     buses,
     memory,
     padsPerBank: PADS_PER_BANK,
-    pads: pads.map(({ mode, level, sync, choke }) => ({ mode, level, sync, choke }))
+    pads: pads.map(({ mode, level, sync, choke, speed, pitch, stretch }) => ({ mode, level, sync, choke, speed, pitch, stretch }))
   };
 }
