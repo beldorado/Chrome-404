@@ -9,10 +9,16 @@ const INTERACTIVE = new Set(['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'A']);
 
 const byKeyboard = (el) => Boolean(el?.matches?.(':focus-visible'));
 
+const typing = (target) => TYPING.has(target?.tagName) && target.type !== 'range' && target.type !== 'checkbox';
+
+export function isUndo(event) {
+  return (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.code === 'KeyZ' && !typing(event.target);
+}
+
 export function actionFor(event, keyboardFocused = byKeyboard) {
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
   const tag = event.target?.tagName;
-  if (TYPING.has(tag) && event.target.type !== 'range' && event.target.type !== 'checkbox') return null;
+  if (typing(event.target)) return null;
   if (event.code in BUS_KEYS) return { kind: 'bus', busId: BUS_KEYS[event.code] };
   const pad = PAD_KEYS.indexOf(event.code);
   if (pad >= 0) return { kind: 'pad', index: pad };

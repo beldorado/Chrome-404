@@ -5,10 +5,11 @@ import { BANKS, BUS_IDS, BUS_LABELS, CHOKE_GROUPS, PADS_PER_BANK, PAD_MODES, REC
 import { ctrlParams, getEffect } from '../effects/registry.js';
 import { clamp, formatValue } from '../shared/params.js';
 import { BPM_MAX, BPM_MIN } from '../shared/tempo.js';
-import { confirmButton, fillEffectOptions, holdButton, nameField, routeSelect, setFill } from './widgets.js';
+import { fillEffectOptions, holdButton, nameField, routeSelect, setFill } from './widgets.js';
 import { KEY_LABELS } from './keys.js';
 import { exportPad, importSample } from './pad-files.js';
 import { createEditor } from './editor.js';
+import { createUndo } from './undo.js';
 
 const HOLD_MS = 280;
 const DRAG_PX = 8;
@@ -56,6 +57,29 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   let transport = null;
   const focus = new Map();
   const holds = new Map();
+  const history = createUndo({ send, getState });
+
+  async function undoable(label, indices, action) {
+    const before = await history.capture(indices);
+    const result = await action();
+    if (!result) return;
+    const text = typeof label === 'function' ? label(result) : label;
+    history.commit(text, before);
+    showStatus(`${text}.`, 'info', { label: 'Undo', run: undo });
+  }
+
+  async function undo() {
+    if (!history.available()) {
+      flash('Undo', 'Nothing to undo');
+      return;
+    }
+    try {
+      const label = await history.undo();
+      flash('Undo', label);
+    } catch (err) {
+      showStatus(err.message);
+    }
+  }
 
   const focusedSlot = (state, busId) => {
     const slots = state.buses[busId].slots;
@@ -267,6 +291,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
     getState,
     showStatus,
     flash,
+    undoable,
     onSlicesSent: (targets) => setBank(Math.floor(targets[0] / PADS_PER_BANK)),
     onClose: () => {
       detail.hidden = false;
@@ -412,12 +437,16 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
     transferDialog.style.top = `${top}px`;
   }
 
-  async function transfer(from, to, mode) {
+  function transfer(from, to, mode) {
     if ([from, to].includes(editor.editing())) editor.close();
-    if (!(await send(MSG.TRANSFER_PAD, { from, to, mode }))) return;
-    focusPad(to);
-    sync(getState());
-    flash({ move: 'Moved', copy: 'Copied', swap: 'Swapped' }[mode], `${padLabel(from)} to ${padLabel(to)}`);
+    const verb = { move: 'Moved', copy: 'Copied', swap: 'Swapped' }[mode];
+    return undoable(`${verb} ${padLabel(from)} to ${padLabel(to)}`, [from, to], async () => {
+      if (!(await send(MSG.TRANSFER_PAD, { from, to, mode }))) return false;
+      focusPad(to);
+      sync(getState());
+      flash(verb, `${padLabel(from)} to ${padLabel(to)}`);
+      return true;
+    });
   }
 
   function stopPads() {
@@ -504,10 +533,18 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   async function loadFile(index, file) {
     if (!file) return;
     focusPad(index);
+    const replacing = Boolean(getState()?.pads[index].clip);
+    const load = async () => {
+      const result = await importSample(index, file);
+      return (await send(MSG.PAD_STORED, { index })) ? result : null;
+    };
     try {
-      const { name, truncated } = await importSample(index, file);
-      await send(MSG.PAD_STORED, { index });
-      if (truncated) showStatus(`Loaded the first 60 seconds of ${name} into pad ${padLabel(index)}.`, 'info');
+      if (replacing) {
+        await undoable(({ name, truncated }) => `Replaced ${padLabel(index)} with ${truncated ? 'the first 60 seconds of ' : ''}${name}`, [index], load);
+      } else {
+        const result = await load();
+        if (result?.truncated) showStatus(`Loaded the first 60 seconds of ${result.name} into pad ${padLabel(index)}.`, 'info');
+      }
     } catch (err) {
       showStatus(err.message);
     } finally {
@@ -631,10 +668,12 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       title: 'Trim this sample and chop it into slices',
       onclick: () => openEditor(index)
     });
-    const clear = confirmButton(h('button', { type: 'button', className: 'key key-small' }), {
-      label: 'Clear',
-      confirmLabel: 'Clear pad?',
-      onConfirm: () => send(MSG.CLEAR_PAD, { index })
+    const clear = h('button', {
+      type: 'button',
+      className: 'key key-small',
+      textContent: 'Clear',
+      title: 'Empty this pad (Ctrl+Z undoes it)',
+      onclick: () => undoable(`Cleared ${padLabel(index)}`, [index], () => send(MSG.CLEAR_PAD, { index }))
     });
     const name = nameField({
       label: `Pad ${padLabel(index)} name`,
@@ -669,10 +708,13 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       )
     );
     const count = loaded.length === 1 ? '1 pad' : `${loaded.length} pads`;
-    const clear = confirmButton(h('button', { type: 'button', className: 'key key-small', disabled: !loaded.length }), {
-      label: `Clear ${count}`,
-      confirmLabel: `Clear ${count}?`,
-      onConfirm: () => send(MSG.CLEAR_PAD, { indices: loaded })
+    const clear = h('button', {
+      type: 'button',
+      className: 'key key-small',
+      textContent: `Clear ${count}`,
+      title: 'Empty every selected pad (Ctrl+Z undoes it)',
+      disabled: !loaded.length,
+      onclick: () => undoable(`Cleared ${count}`, loaded, () => send(MSG.CLEAR_PAD, { indices: loaded }))
     });
     detail.replaceChildren(
       h('div', { className: 'pad-title pad-title-group' }, h('strong', { textContent: `${indices.length} pads` }), chips),
@@ -854,6 +896,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
     nextBank: () => setBank(bankIndex + 1),
     chop: () => editor.chopAtPlayhead(),
     stopPads,
+    undo,
     selectedBus: () => selected,
     describeSelected(state) {
       const slot = focusedSlot(state, selected);

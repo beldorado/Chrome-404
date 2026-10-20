@@ -180,10 +180,31 @@ function check(name, pass, detail = '') {
     await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 2, null, { timeout: 5000 }).catch(() => {});
     check('Pads survive reopening the panel', (await page.locator('.pad.loaded').count()) === 2);
 
+    const firstName = (await engine('get-state')).result.pads[0].clip.name;
     await page.click('.pad-tools >> text=Clear');
-    await page.click('.pad-tools >> text=Clear pad?');
     await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 1);
-    check('Clear asks for a second click, then empties the pad', true);
+    check('Clear empties the pad in one click and offers Undo', await page.evaluate(() => !document.getElementById('status').hidden && /^Cleared A1/.test(document.getElementById('status-text').textContent) && !document.getElementById('status-action').hidden));
+    await page.click('#status-action');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 2, null, { timeout: 5000 }).catch(() => {});
+    const restored = (await engine('get-state')).result.pads[0];
+    check('Undo brings the cleared pad back with its name and BPM', restored.clip?.name === firstName && restored.clip?.bpm === 90, restored.clip?.name);
+    await page.click('.pad-tools >> text=Clear');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 1);
+    await page.keyboard.press('Control+KeyZ');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 2, null, { timeout: 5000 }).catch(() => {});
+    check('Ctrl+Z undoes Clear too', (await page.locator('.pad.loaded').count()) === 2);
+    await page.click('.pad-tools >> text=Clear');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 1);
+    await page.keyboard.press('Control+KeyZ');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 2, null, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Control+KeyZ');
+    await page.waitForTimeout(200);
+    check('A second Ctrl+Z has nothing left to undo', (await page.locator('.pad.loaded').count()) === 2 && /Nothing to undo/.test(await page.textContent('#readout')));
+    await page.click('.pad-tools >> text=Clear');
+    await page.waitForFunction(() => document.querySelectorAll('.pad.loaded').length === 1);
+    await page.waitForFunction(() => document.getElementById('status').hidden, null, { timeout: 12000 }).catch(() => {});
+    check('The Undo message goes away on its own', await page.evaluate(() => document.getElementById('status').hidden));
     await shot('03-perform');
 
     await page.locator('.pad').nth(2).click();
@@ -255,7 +276,6 @@ function check(name, pass, detail = '') {
     check('Trimming drops the chop that falls before the new start', /4 slices/.test(await page.textContent('.editor-readout')), await page.textContent('.editor-readout'));
 
     await page.click('.editor >> text=Truncate');
-    await page.click('.editor >> text=Cut for good?');
     await page.waitForFunction(() => /Start 0\.000/.test(document.querySelector('.editor-readout').textContent) && /4 slices/.test(document.querySelector('.editor-readout').textContent), null, { timeout: 5000 }).catch(() => {});
     const cutClip = (await engine('get-state')).result.pads[2].clip;
     check(
@@ -263,6 +283,13 @@ function check(name, pass, detail = '') {
       Math.abs(cutClip.duration - (trimmed.duration - trimmed.start)) < 0.002 && cutClip.start === 0 && cutClip.end === cutClip.duration && /4 slices/.test(await page.textContent('.editor-readout')) && (await page.evaluate(() => [...document.querySelectorAll('.editor-head .key')].find((b) => b.textContent === 'Truncate')?.disabled)),
       `${cutClip.duration.toFixed(3)} s, ${await page.textContent('.editor-readout')}`
     );
+    await page.keyboard.press('Control+KeyZ');
+    for (let i = 0; i < 40 && (await engine('get-state')).result.pads[2].clip.duration < trimmed.duration - 0.01; i++) await page.waitForTimeout(50);
+    const uncut = (await engine('get-state')).result.pads[2].clip;
+    check('Ctrl+Z undoes Truncate and keeps the trim', Math.abs(uncut.duration - trimmed.duration) < 0.002 && Math.abs(uncut.start - trimmed.start) < 0.002, `${uncut.duration.toFixed(3)} s from ${uncut.start.toFixed(3)} s`);
+    await page.waitForFunction(() => /4 slices/.test(document.querySelector('.editor-readout').textContent) && !/Start 0\.000/.test(document.querySelector('.editor-readout').textContent), null, { timeout: 5000 }).catch(() => {});
+    await page.click('.editor >> text=Truncate');
+    await page.waitForFunction(() => /Start 0\.000/.test(document.querySelector('.editor-readout').textContent), null, { timeout: 5000 }).catch(() => {});
 
     await page.fill('.editor-title .name-field', 'Boom take');
     await page.press('.editor-title .name-field', 'Enter');

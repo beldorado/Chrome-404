@@ -49,7 +49,11 @@
     <form id="preset-form" class="preset-form" aria-label="Save preset" hidden></form>
   </header>
 
-  <div id="status" class="status" role="status" hidden></div>
+  <div id="status" class="status" role="status" hidden>
+    <span id="status-text" class="status-text"></span>
+    <button id="status-action" type="button" class="key key-small status-action" hidden></button>
+    <button id="status-close" type="button" class="status-close" aria-label="Dismiss" title="Dismiss">✕</button>
+  </div>
 
   <main id="perform" class="perform" role="tabpanel" aria-labelledby="view-perform"></main>
 

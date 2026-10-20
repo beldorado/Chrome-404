@@ -6,7 +6,7 @@ import { TapTempo } from '../shared/tempo.js';
 import { BEATS_PER_BAR, QUANTIZE_OPTIONS, position } from '../shared/grid.js';
 import { createPresets } from './presets.js';
 import { MidiLearn } from './midi.js';
-import { FocusModality, HoldKeys } from './keys.js';
+import { FocusModality, HoldKeys, isUndo } from './keys.js';
 import { h } from './dom.js';
 import { EDITORS } from './editors/index.js';
 import { LFO_PARAMS, isModulatable } from '../shared/lfo.js';
@@ -18,6 +18,9 @@ const AUTO_CONFIDENT = 0.2;
 const GR_RANGE_DB = 24;
 const MASTER_MAX = 1.5;
 const READOUT_MS = 1600;
+const STATUS_INFO_MS = 4500;
+const STATUS_ACTION_MS = 8000;
+const STATUS_RESUME_MS = 2000;
 const VIEWS = ['perform', 'edit'];
 const ROUTING_HINTS = {
   Parallel: 'Bus 1 and Bus 2 each feed Bus 3, then Bus 4.',
@@ -30,6 +33,9 @@ let structureKey = '';
 let pointerDown = false;
 let pending = [];
 let readoutTimer = null;
+let statusTimer = null;
+let statusMs = 0;
+let statusAction = null;
 const editors = new Map();
 const collapsed = new Set();
 const tapTempo = new TapTempo();
@@ -38,11 +44,29 @@ const perform = createPerform({ root: $('perform'), send, getState: () => state,
 const focusModality = new FocusModality();
 const keys = new HoldKeys({ press: pressAction, release: releaseAction, keyboardFocused: (el) => focusModality.has(el) });
 
-function showStatus(message, kind = 'error') {
+function showStatus(message, kind = 'error', action = null) {
   const el = $('status');
-  el.textContent = message;
+  $('status-text').textContent = message;
   el.classList.toggle('info', kind === 'info');
+  statusAction = action;
+  $('status-action').hidden = !action;
+  if (action) $('status-action').textContent = action.label;
   el.hidden = false;
+  statusMs = kind === 'info' ? (action ? STATUS_ACTION_MS : STATUS_INFO_MS) : 0;
+  scheduleHide(statusMs);
+}
+
+function scheduleHide(ms) {
+  clearTimeout(statusTimer);
+  statusTimer = ms ? setTimeout(hideStatus, ms) : null;
+}
+
+function hideStatus() {
+  clearTimeout(statusTimer);
+  statusTimer = null;
+  statusMs = 0;
+  statusAction = null;
+  $('status').hidden = true;
 }
 
 async function send(type, payload = {}) {
@@ -647,9 +671,17 @@ function bindControls() {
   $('xfader').addEventListener('input', (e) => send(MSG.SET_CROSSFADER, { value: Number(e.target.value) }));
   $('xfader').addEventListener('dblclick', () => send(MSG.SET_CROSSFADER, { value: 0 }));
 
-  $('status').addEventListener('click', () => {
-    $('status').hidden = true;
+  $('status-text').addEventListener('click', hideStatus);
+  $('status-close').addEventListener('click', hideStatus);
+  $('status-action').addEventListener('click', () => {
+    const action = statusAction;
+    hideStatus();
+    action?.run();
   });
+  $('status').addEventListener('pointerenter', () => scheduleHide(0));
+  $('status').addEventListener('pointerleave', () => statusMs && scheduleHide(STATUS_RESUME_MS));
+  $('status').addEventListener('focusin', () => scheduleHide(0));
+  $('status').addEventListener('focusout', () => statusMs && scheduleHide(STATUS_RESUME_MS));
 
   $('routing').append(
     ...BUS_ROUTINGS.map((routing) => h('button', { type: 'button', role: 'radio', textContent: routing, dataset: { routing }, onclick: () => send(MSG.SET_BUS_ROUTING, { routing }) }))
@@ -658,7 +690,13 @@ function bindControls() {
   bindAddBar();
 
   document.addEventListener('keydown', (e) => {
-    if (!document.querySelector('dialog[open]')) keys.down(e);
+    if (document.querySelector('dialog[open]')) return;
+    if (isUndo(e)) {
+      e.preventDefault();
+      if (!e.repeat) perform.undo();
+      return;
+    }
+    keys.down(e);
   });
   document.addEventListener('keyup', (e) => keys.up(e));
   window.addEventListener('blur', () => keys.releaseAll());

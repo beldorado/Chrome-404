@@ -4,7 +4,7 @@ import { PITCH_RANGE, SPEED_MAX, SPEED_MIN, STRETCH_MODES, padLabel, padRate } f
 import { cleanChops, detectTransients, equalChops, extractSlice, mono, slicesFrom, snapTime, truncateClip, MIN_SLICE_SECONDS } from '../shared/chop.js';
 import { getClip, putClip, updateClip } from '../shared/pad-store.js';
 import { clamp } from '../shared/params.js';
-import { confirmButton, nameField } from './widgets.js';
+import { nameField } from './widgets.js';
 import { createKnob } from './knob.js';
 
 const HIT_PX = 7;
@@ -40,7 +40,7 @@ export function freePadsAfter(pads, index) {
   return out;
 }
 
-export function createEditor({ send, getState, showStatus, flash, onSlicesSent = () => {}, onClose = () => {} }) {
+export function createEditor({ send, getState, showStatus, flash, undoable, onSlicesSent = () => {}, onClose = () => {} }) {
   let index = null;
   let record = null;
   let data = null;
@@ -142,11 +142,7 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
   const clearChops = h('button', { type: 'button', className: 'key key-small', textContent: 'Clear chops', onclick: () => setChops([], 'Chops cleared') });
   const resetTrim = h('button', { type: 'button', className: 'key key-small', textContent: 'Reset trim', onclick: () => setRegion(0, duration, true) });
   const toPads = h('button', { type: 'button', className: 'key key-small key-go', onclick: () => sendSlices() });
-  const truncate = confirmButton(h('button', { type: 'button', className: 'key key-small', title: 'Cut the sample down to S–E for good. Chops are kept. This can’t be undone.' }), {
-    label: 'Truncate',
-    confirmLabel: 'Cut for good?',
-    onConfirm: () => truncateToTrim()
-  });
+  const truncate = h('button', { type: 'button', className: 'key key-small', textContent: 'Truncate', title: 'Cut the sample down to S–E. Chops are kept, and Ctrl+Z undoes it.', onclick: () => truncateToTrim() });
   const done = h('button', { type: 'button', className: 'key key-small', textContent: 'Done', onclick: () => close() });
 
   const el = h(
@@ -408,15 +404,16 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
 
   async function truncateToTrim() {
     if (!record || (start === 0 && end === duration)) return;
-    clearTimeout(saveTimer);
+    await save();
     stopPlay();
     const target = index;
     const length = end - start;
     const next = truncateClip(record, start, end, chops);
     try {
-      await putClip(next);
-      await send(MSG.PAD_STORED, { index: target });
-      showStatus(`Truncated ${padLabel(target)} to ${fmt(length)}.`, 'info');
+      await undoable(`Truncated ${padLabel(target)} to ${fmt(length)}`, [target], async () => {
+        await putClip(next);
+        return send(MSG.PAD_STORED, { index: target });
+      });
     } catch (err) {
       showStatus(`Couldn't truncate the sample: ${err.message}`);
     }
@@ -424,14 +421,24 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
 
   function persist() {
     clearTimeout(saveTimer);
+    const write = saver();
+    saveTimer = setTimeout(write, SAVE_DELAY_MS);
+  }
+
+  function save() {
+    clearTimeout(saveTimer);
+    return saver()();
+  }
+
+  function saver() {
     const target = index;
     const loaded = take;
     const frames = record?.channels[0].length;
     const snapshot = { start, end, chops: [...chops] };
-    saveTimer = setTimeout(async () => {
+    return async () => {
       if (getState()?.pads[target]?.clip?.take !== loaded) return;
       await updateClip(target, (current) => (current.channels[0].length === frames ? snapshot : null));
-    }, SAVE_DELAY_MS);
+    };
   }
 
   function setChops(next, message) {
@@ -489,14 +496,16 @@ export function createEditor({ send, getState, showStatus, flash, onSlicesSent =
     toPads.disabled = true;
     const targets = free.slice(0, slices.length);
     try {
-      for (const [i, slice] of slices.entries()) {
-        const channels = extractSlice(record.channels, record.sampleRate, slice.start, slice.end);
-        await putClip({ index: targets[i], name: `${record.name}`.slice(0, 34) + ` ${i + 1}`, bpm: bpm(), sampleRate: record.sampleRate, channels });
-        await send(MSG.PAD_STORED, { index: targets[i] });
-        await send(MSG.UPDATE_PAD, { index: targets[i], changes: { mode: 'One-shot' } });
-      }
-      showStatus(`Sent ${slices.length} slices to pads ${padLabel(targets[0])}–${padLabel(targets[targets.length - 1])} as one-shots.`, 'info');
-      onSlicesSent(targets);
+      await undoable(`Sent ${slices.length} slices to pads ${padLabel(targets[0])}–${padLabel(targets[targets.length - 1])} as one-shots`, targets, async () => {
+        for (const [i, slice] of slices.entries()) {
+          const channels = extractSlice(record.channels, record.sampleRate, slice.start, slice.end);
+          await putClip({ index: targets[i], name: `${record.name}`.slice(0, 34) + ` ${i + 1}`, bpm: bpm(), sampleRate: record.sampleRate, channels });
+          await send(MSG.PAD_STORED, { index: targets[i] });
+          await send(MSG.UPDATE_PAD, { index: targets[i], changes: { mode: 'One-shot' } });
+        }
+        onSlicesSent(targets);
+        return true;
+      });
     } catch (err) {
       showStatus(`Couldn't save the slices: ${err.message}`);
     } finally {
