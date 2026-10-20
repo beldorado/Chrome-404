@@ -49,6 +49,24 @@
     <form id="preset-form" class="preset-form" aria-label="Save preset" hidden></form>
   </header>
 
+  <section class="plate sources-plate" aria-labelledby="sources-fold">
+    <h2 class="plate-head"><button id="sources-fold" type="button" class="fold" aria-expanded="true" aria-controls="sources-body">Sources <span id="sources-summary" class="plate-summary"></span></button></h2>
+    <div id="sources-body">
+      <p class="hint" id="sources-empty">Nothing captured yet. On a tab that's playing audio, click the Chrome-404 icon, press Alt+Shift+4, or right-click the page and choose Capture this tab.</p>
+      <ul id="sources" class="sources"></ul>
+      <div id="xfader-row" class="xfader-row" hidden>
+        <span aria-hidden="true">A</span>
+        <input id="xfader" type="range" min="-1" max="1" step="0.01" aria-label="Crossfader between sources marked A and B" title="Double-click to centre">
+        <span aria-hidden="true">B</span>
+      </div>
+      <p class="hint" id="sources-more" hidden>To add another tab, click the Chrome-404 icon on it or press Alt+Shift+4.</p>
+      <div id="pending" hidden>
+        <p class="hint">Playing but not captured yet. Chrome needs you to click the Chrome-404 icon on each tab once (or press Alt+Shift+4, or right-click and choose Capture this tab):</p>
+        <ul id="pending-list" class="sources"></ul>
+      </div>
+    </div>
+  </section>
+
   <div id="status" class="status" role="status" hidden>
     <span id="status-text" class="status-text"></span>
     <button id="status-action" type="button" class="key key-small status-action" hidden></button>
@@ -56,21 +74,6 @@
   </div>
 
   <main id="perform" class="perform" role="tabpanel" aria-labelledby="view-perform"></main>
-
-  <section class="plate sources-plate" aria-labelledby="sources-title">
-    <h2 id="sources-title">Sources</h2>
-    <p class="hint" id="sources-empty">Click the Chrome-404 icon (or press Alt+Shift+4) on a tab that's playing audio.</p>
-    <ul id="sources" class="sources"></ul>
-    <div id="xfader-row" class="xfader-row" hidden>
-      <span aria-hidden="true">A</span>
-      <input id="xfader" type="range" min="-1" max="1" step="0.01" aria-label="Crossfader between sources marked A and B" title="Double-click to centre">
-      <span aria-hidden="true">B</span>
-    </div>
-    <div id="pending" hidden>
-      <p class="hint">Playing but not captured yet. Chrome needs you to click the Chrome-404 icon on each tab once (or press Alt+Shift+4, or right-click and choose Capture this tab):</p>
-      <ul id="pending-list" class="sources"></ul>
-    </div>
-  </section>
 
   <div id="edit" class="edit" role="tabpanel" aria-labelledby="view-edit">
     <section class="routing" aria-label="Bus routing">

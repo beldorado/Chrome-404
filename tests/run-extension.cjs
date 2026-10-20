@@ -75,6 +75,10 @@ function check(name, pass, detail = '') {
     check('Perform view is the default', await page.evaluate(() => document.body.dataset.view === 'perform' && !document.getElementById('perform').hidden && document.getElementById('edit').hidden));
     check('Six bus FX buttons and twelve pads render, keyed Q to V', (await page.locator('.fx').count()) === 6 && (await page.locator('.pad').count()) === 12 && (await page.$$eval('.pad .pad-key', (ks) => ks.map((k) => k.textContent).join(''))) === 'QWERASDFZXCV');
     await shot('01-empty');
+    check('With no tab captured, the screen says so and Sources sits under the header with its hint', await page.evaluate(() => {
+      const plate = document.querySelector('.sources-plate');
+      return document.getElementById('detected').textContent === 'No tab captured' && plate.compareDocumentPosition(document.getElementById('perform')) & Node.DOCUMENT_POSITION_FOLLOWING && !document.getElementById('sources-empty').hidden && document.getElementById('sources-fold').disabled;
+    }));
 
     await page.selectOption('#preset', 'classic');
     await page.waitForFunction(() => document.querySelector('.fx[data-bus="bus4"]').classList.contains('lit'));
@@ -502,6 +506,17 @@ function check(name, pass, detail = '') {
     await page.keyboard.press('Escape');
     check('Space is left to a control reached with Tab, but taken as tap after a mouse click', mouseFocusTaken === true && tabFocusTaken === false, `focused ${focused}; mouse-focus taken ${mouseFocusTaken}, tab-focus taken ${tabFocusTaken}`);
 
+    await page.click('.bank .fold');
+    check('Folding Pads hides the pads and sampling', await page.evaluate(() => document.getElementById('pad-body').hidden && document.querySelector('.bank .fold').getAttribute('aria-expanded') === 'false'));
+    await page.keyboard.press('KeyE');
+    await page.waitForFunction(() => /A3 playing/.test(document.querySelector('.bank .plate-summary').textContent), null, { timeout: 3000 }).catch(() => {});
+    check('Pad keys still play folded pads, and the header says what is playing', /A3 playing/.test(await page.textContent('.bank .plate-summary')), await page.textContent('.bank .plate-summary'));
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await page.waitForFunction(() => document.querySelectorAll('.pad').length === 12 && document.querySelector('#bpm').value !== '');
+    check('Pads stay folded after reopening the panel', await page.evaluate(() => document.getElementById('pad-body').hidden));
+    await page.click('.bank .fold');
+    check('Unfolding brings the pads back', await page.evaluate(() => !document.getElementById('pad-body').hidden));
     await page.setViewportSize({ width: 320, height: 1100 });
     await shot('05-narrow');
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);

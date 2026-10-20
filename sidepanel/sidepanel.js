@@ -36,6 +36,7 @@ let readoutTimer = null;
 let statusTimer = null;
 let statusMs = 0;
 let statusAction = null;
+let sourcesFolded = localStorage.getItem('sourcesFolded') === '1';
 const editors = new Map();
 const collapsed = new Set();
 const tapTempo = new TapTempo();
@@ -149,6 +150,22 @@ function currentSource(id) {
 function renderSources() {
   $('sources').replaceChildren(...state.sources.map(renderSource));
   $('sources-empty').hidden = state.sources.length > 0;
+  $('sources-more').hidden = state.sources.length === 0;
+  document.querySelector('.sources-plate').classList.toggle('empty', state.sources.length === 0);
+}
+
+function updateSourcesFold() {
+  const { sources } = state;
+  const folded = sourcesFolded && sources.length > 0;
+  const fold = $('sources-fold');
+  fold.disabled = sources.length === 0;
+  fold.setAttribute('aria-expanded', String(!folded));
+  fold.title = folded ? 'Show the captured tabs' : 'Hide the captured tabs';
+  $('sources-body').hidden = folded;
+  const live = sources.filter((s) => !s.muted);
+  let summary = '';
+  if (folded) summary = live.length ? `${live[0].label}${live.length > 1 ? ` +${live.length - 1}` : ''}` : 'All muted';
+  $('sources-summary').textContent = summary;
 }
 
 function renderSource(source) {
@@ -487,6 +504,7 @@ function updateSources() {
     setFill(level, level.value / SOURCE_LEVEL_MAX);
     el.querySelector('[data-role="level-readout"]').textContent = `${Math.round(source.level * 100)}%`;
   }
+  updateSourcesFold();
   const decks = state.sources.length >= 2 || state.sources.some((s) => s.side);
   $('xfader-row').hidden = !decks;
   setIfIdle($('xfader'), state.crossfader);
@@ -500,8 +518,9 @@ function updateValues() {
   $('quantize').textContent = state.quantize === 'Off' ? 'Q off' : `Q ${state.quantize}`;
   $('quantize').classList.toggle('on', state.quantize !== 'Off');
   const detected = state.detected;
-  $('detected').textContent = detected ? `Heard ${detected.bpm.toFixed(1)} (${Math.round(detected.confidence * 100)}%)` : 'Heard —';
-  $('detected').classList.toggle('confident', Boolean(detected && detected.confidence >= AUTO_CONFIDENT));
+  if (!state.sources.length) $('detected').textContent = 'No tab captured';
+  else $('detected').textContent = detected ? `Heard ${detected.bpm.toFixed(1)} (${Math.round(detected.confidence * 100)}%)` : 'Heard —';
+  $('detected').classList.toggle('confident', Boolean(state.sources.length && detected && detected.confidence >= AUTO_CONFIDENT));
   idleReadout();
   updateSources();
   for (const btn of $('routing').children) btn.setAttribute('aria-checked', String(btn.dataset.routing === state.busRouting));
@@ -666,6 +685,12 @@ function bindControls() {
     $('learn').setAttribute('aria-pressed', String(on));
     document.body.classList.toggle('learning', on);
     if (!on) document.querySelectorAll('.learn-target').forEach((el) => el.classList.remove('learn-target'));
+  });
+
+  $('sources-fold').addEventListener('click', () => {
+    sourcesFolded = !sourcesFolded;
+    localStorage.setItem('sourcesFolded', sourcesFolded ? '1' : '0');
+    if (state) updateSourcesFold();
   });
 
   $('xfader').addEventListener('input', (e) => send(MSG.SET_CROSSFADER, { value: Number(e.target.value) }));

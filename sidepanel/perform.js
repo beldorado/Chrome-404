@@ -51,6 +51,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   let selectedPad = bankIndex * PADS_PER_BANK;
   let selection = new Set([selectedPad]);
   let recLength = stored('recLength', REC_LENGTHS, '1 bar');
+  let padsFolded = localStorage.getItem('padsFolded') === '1';
   let ctrlKey = '';
   let detailKey = '';
   let knobs = [];
@@ -308,16 +309,34 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   );
   const bankSwitch = h('div', { className: 'seg bank-switch', role: 'radiogroup', 'aria-label': 'Pad bank' }, ...bankButtons);
 
-  const bank = h(
-    'section',
-    { className: 'bank', 'aria-label': 'Pads' },
-    h('div', { className: 'bank-head' }, h('h2', { textContent: 'Pads' }), bankSwitch, padRoute, stopAll),
+  const padsSummary = h('span', { className: 'plate-summary' });
+  const padsFold = h('button', { type: 'button', className: 'fold', 'aria-controls': 'pad-body', onclick: () => foldPads(!padsFolded) }, 'Pads ', padsSummary);
+  const bankBody = h(
+    'div',
+    { id: 'pad-body' },
     h('div', { className: 'pads' }, ...padEls.map((p) => p.el)),
     h('div', { className: 'rec-row' }, recButton, recSelect),
     detail,
-    editor.el,
+    editor.el
+  );
+  const bank = h(
+    'section',
+    { className: 'bank', 'aria-label': 'Pads' },
+    h('div', { className: 'bank-head' }, h('h2', { className: 'plate-head' }, padsFold), bankSwitch, padRoute, stopAll),
+    bankBody,
     fileInput
   );
+
+  function foldPads(folded) {
+    padsFolded = folded;
+    localStorage.setItem('padsFolded', folded ? '1' : '0');
+    bank.classList.toggle('folded', folded);
+    bankBody.hidden = folded;
+    padsFold.setAttribute('aria-expanded', String(!folded));
+    padsFold.title = folded ? 'Show the pads and sampling' : 'Hide the pads and sampling. Pad keys still play them.';
+    const state = getState();
+    if (state) update(state);
+  }
 
   // Drag a pad onto another pad to move, copy or swap it.
   const dragGhost = h('div', { className: 'drag-ghost', 'aria-hidden': 'true', hidden: true });
@@ -832,6 +851,10 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       p.el.setAttribute('aria-label', `Pad ${padLabel(i)}, ${pad.clip ? `${pad.clip.name}, ${pad.mode}${pad.choke ? `, choke group ${pad.choke}` : ''}${pad.playing ? ', playing' : ''}` : 'empty'}. Key ${KEY_LABELS[`pad${slotIndex}`]}.`);
     });
     stopAll.disabled = !state.pads.some((p) => p.playing);
+    const playing = state.pads.flatMap((p, i) => (p.playing ? [padLabel(i)] : []));
+    let summary = '';
+    if (padsFolded) summary = rec ? `Recording to ${padLabel(rec.pad)}` : playing.length ? `${playing.join(', ')} playing` : '';
+    padsSummary.textContent = summary;
     const route = padRoute.querySelector('select');
     if (route) route.value = state.padRoute;
     updateRec(state);
@@ -914,6 +937,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   }
 
   root.append(ctrlPlate, fxRow, bank, dragGhost, transferDialog);
+  foldPads(padsFolded);
 
   return {
     sync,
