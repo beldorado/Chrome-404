@@ -12,6 +12,7 @@ function resonanceQ(type, amount) {
 export default {
   id: 'super-filter',
   name: 'Super Filter',
+  short: 'S.Filter',
   category: 'Filter',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master'],
   params: [

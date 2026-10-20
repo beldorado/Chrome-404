@@ -11,6 +11,7 @@ import { h } from './dom.js';
 import { EDITORS } from './editors/index.js';
 import { LFO_PARAMS, isModulatable } from '../shared/lfo.js';
 import { busLit, createPerform } from './perform.js';
+import { createKeymap } from './keymap.js';
 import { fillEffectOptions, routeSelect, setFill } from './widgets.js';
 
 const SLIDER_STEPS = 1000;
@@ -42,6 +43,7 @@ const collapsed = new Set();
 const tapTempo = new TapTempo();
 const midi = new MidiLearn({ onControl: handleMidi, onButton: handleMidiButton, onStatus: showStatus });
 const perform = createPerform({ root: $('perform'), send, getState: () => state, flash, armLearn, showStatus });
+const keymap = createKeymap();
 const focusModality = new FocusModality();
 const keys = new HoldKeys({ press: pressAction, release: releaseAction, keyboardFocused: (el) => focusModality.has(el) });
 
@@ -650,6 +652,7 @@ function pressAction(action) {
   else if (action.kind === 'tap') tap();
   else if (action.kind === 'stop') perform.stopPads();
   else if (action.kind === 'rec') perform.toggleRecord();
+  else if (action.kind === 'help') keymap.toggle();
 }
 
 function releaseAction(action) {
@@ -686,6 +689,8 @@ function bindControls() {
     document.body.classList.toggle('learning', on);
     if (!on) document.querySelectorAll('.learn-target').forEach((el) => el.classList.remove('learn-target'));
   });
+
+  $('keys-open').addEventListener('click', () => keymap.toggle());
 
   $('sources-fold').addEventListener('click', () => {
     sourcesFolded = !sourcesFolded;

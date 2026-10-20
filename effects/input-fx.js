@@ -12,6 +12,7 @@ const AMP_MAX_GAIN_DB = 30;
 export const autoPitch = {
   id: 'auto-pitch',
   name: 'Auto Pitch',
+  short: 'A.Pitch',
   category: 'Input',
   buses: INPUT,
   worklet: 'worklets/autopitch.js',
@@ -114,6 +115,7 @@ export const vocoder = {
 export const ampSim = {
   id: 'amp-sim',
   name: 'Amp Sim',
+  short: 'Amp',
   category: 'Input',
   buses: INPUT,
   params: [

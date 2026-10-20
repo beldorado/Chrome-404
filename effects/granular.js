@@ -5,6 +5,7 @@ const MAIN = ['bus1', 'bus2', 'bus3', 'bus4', 'master'];
 export const grainCloud = {
   id: 'grain-cloud',
   name: 'Grain Cloud',
+  short: 'Grains',
   category: 'Granular',
   buses: MAIN,
   defaultMix: 0.5,
@@ -23,6 +24,7 @@ export const grainCloud = {
 export const resonator = {
   id: 'resonator',
   name: 'Resonator',
+  short: 'Reson',
   category: 'Granular',
   buses: MAIN,
   defaultMix: 0.5,

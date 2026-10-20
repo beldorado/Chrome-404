@@ -7,6 +7,7 @@ const MAX_FLUTTER = 0.0007;
 export default {
   id: 'cassette-sim',
   name: 'Cassette Sim',
+  short: 'Cassette',
   category: 'Character',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master'],
   latency: BASE_DELAY,

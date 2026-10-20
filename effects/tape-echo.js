@@ -6,6 +6,7 @@ const MAX_WOW = 0.004;
 export default {
   id: 'tape-echo',
   name: 'Tape Echo',
+  short: 'T.Echo',
   category: 'Space',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master'],
   tempoSync: true,

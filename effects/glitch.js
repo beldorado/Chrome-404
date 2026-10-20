@@ -49,6 +49,7 @@ export const downer = {
 export const looper = {
   id: 'looper',
   name: 'DJ Looper',
+  short: 'Looper',
   category: 'Glitch',
   buses: MAIN,
   tempoSync: true,

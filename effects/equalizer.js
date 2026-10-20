@@ -22,6 +22,7 @@ function bandParams(band) {
 export default {
   id: 'equalizer',
   name: 'Equalizer',
+  short: 'EQ',
   category: 'Filter',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master', 'input'],
   ui: 'eq',

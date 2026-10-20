@@ -122,6 +122,21 @@ function check(name, pass, detail = '') {
     const recalled = (await engine('get-state')).result.buses.bus1.slots[0].params.cutoff;
     check('Swapping away and back keeps the cutoff (effect memory)', Math.abs(recalled - cutoff) < 1e-6, `${Math.round(recalled)} Hz`);
 
+    const reso = () => engine('get-state').then((r) => r.result.buses.bus1.slots[0].params.resonance);
+    const resoFrom = await reso();
+    await page.locator('.ctrl-knob').nth(1).focus();
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(100);
+    const resoUp = await reso();
+    await page.keyboard.press('Home');
+    await page.waitForTimeout(100);
+    const resoHome = await reso();
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(100);
+    check('CTRL knobs work from the keyboard: arrows step, Home goes to the minimum, Delete resets', resoUp > resoFrom && resoHome === 0 && Math.abs((await reso()) - 0.2) < 1e-6 && (await page.getAttribute('.ctrl-knob >> nth=1', 'role')) === 'slider', `${resoFrom} → ${resoUp} → ${resoHome}`);
+    await page.locator('.ctrl-knob').nth(1).blur();
+
     await page.click('#quantize');
     await page.waitForFunction(() => document.querySelector('#quantize').textContent === 'Q 1/8');
     check('Quantize key cycles 1/16 → 1/8', true);
@@ -450,7 +465,7 @@ function check(name, pass, detail = '') {
     await page.click('#view-perform');
 
     await page.selectOption('#preset', 'glitchKit');
-    await page.waitForFunction(() => document.querySelector('.fx[data-bus="bus4"]').classList.contains('lit') && document.querySelector('.fx[data-bus="bus1"] .fx-effect').textContent === 'DJ Looper');
+    await page.waitForFunction(() => document.querySelector('.fx[data-bus="bus4"]').classList.contains('lit') && document.querySelector('.fx[data-bus="bus1"] .fx-effect').textContent === 'Looper');
     check('Glitch kit loads with buses 1–3 ready but dark', await page.evaluate(() => ['bus1', 'bus2', 'bus3'].every((b) => !document.querySelector(`.fx[data-bus="${b}"]`).classList.contains('lit'))));
 
     const fxShape = async () => {
@@ -468,7 +483,7 @@ function check(name, pass, detail = '') {
     await page.waitForFunction(() => !document.querySelector('.fx[data-bus="bus4"]').classList.contains('lit'));
     const mine = await page.evaluate(() => [...document.querySelectorAll('#preset option')].find((o) => o.textContent === 'My kit').value);
     await page.selectOption('#preset', mine);
-    await page.waitForFunction(() => document.querySelector('.fx[data-bus="bus1"] .fx-effect').textContent === 'DJ Looper');
+    await page.waitForFunction(() => document.querySelector('.fx[data-bus="bus1"] .fx-effect').textContent === 'Looper');
     check('Loading a saved preset brings back the whole FX setup', (await fxShape()) === kitShape);
     await page.click('#save-preset');
     await page.keyboard.type('my KIT');
@@ -505,6 +520,18 @@ function check(name, pass, detail = '') {
     const tabFocusTaken = await page.evaluate(() => window.__spaceTaken);
     await page.keyboard.press('Escape');
     check('Space is left to a control reached with Tab, but taken as tap after a mouse click', mouseFocusTaken === true && tabFocusTaken === false, `focused ${focused}; mouse-focus taken ${mouseFocusTaken}, tab-focus taken ${tabFocusTaken}`);
+
+    await page.keyboard.press('Shift+Slash');
+    await page.waitForFunction(() => document.querySelector('.keymap')?.open, null, { timeout: 2000 }).catch(() => {});
+    check('? opens the key map with all 23 keys', await page.evaluate(() => document.querySelector('.keymap').open && document.querySelectorAll('.keymap .cap').length === 23));
+    await page.waitForTimeout(250);
+    await shot('09-keymap');
+    await page.keyboard.press('Escape');
+    check('Esc closes the key map', await page.evaluate(() => !document.querySelector('.keymap').open));
+    await page.click('#keys-open');
+    check('The ? button opens it too', await page.evaluate(() => document.querySelector('.keymap').open));
+    await page.keyboard.press('Shift+Slash');
+    check('…and ? closes it again', await page.evaluate(() => !document.querySelector('.keymap').open));
 
     await page.click('.bank .fold');
     check('Folding Pads hides the pads and sampling', await page.evaluate(() => document.getElementById('pad-body').hidden && document.querySelector('.bank .fold').getAttribute('aria-expanded') === 'false'));

@@ -6,6 +6,7 @@ const RADIUS = 19;
 const DRAG_PIXELS = 160;
 const FINE = 0.2;
 const WHEEL_STEP = 0.02;
+const KEY_STEPS = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 5, PageDown: -5 };
 
 function point(angle) {
   const rad = (angle * Math.PI) / 180;
@@ -18,7 +19,15 @@ function arc(from, to) {
 }
 
 export function createKnob({ param, onChange, onArm }) {
-  const el = h('div', { className: 'knob', title: 'Drag up/down (Shift = fine) · double-click to reset' });
+  const el = h('div', {
+    className: 'knob',
+    tabIndex: 0,
+    role: 'slider',
+    'aria-label': param.name,
+    'aria-valuemin': String(param.min),
+    'aria-valuemax': String(param.max),
+    title: 'Drag up or down, or use the arrow keys. Shift for fine steps, double-click to reset.'
+  });
   el.innerHTML = `<svg viewBox="0 0 50 50"><path class="knob-track" d="${arc(-SWEEP, SWEEP)}"/><path class="knob-value"/><circle class="knob-dot" r="3"/></svg>`;
   const valuePath = el.querySelector('.knob-value');
   const dot = el.querySelector('.knob-dot');
@@ -43,6 +52,8 @@ export function createKnob({ param, onChange, onArm }) {
     dot.setAttribute('cx', x);
     dot.setAttribute('cy', y);
     readout.textContent = formatValue(param, value);
+    el.setAttribute('aria-valuenow', String(value));
+    el.setAttribute('aria-valuetext', readout.textContent);
   };
 
   const commitValue = (value) => {
@@ -51,6 +62,13 @@ export function createKnob({ param, onChange, onArm }) {
   };
 
   const commit = (n, fine = false) => commitValue(snap(fromNormalized(param, clamp(n, 0, 1)), fine));
+
+  const nudge = (steps, fine) => {
+    let next = snap(fromNormalized(param, clamp(normalized + steps * WHEEL_STEP * (fine ? FINE : 1), 0, 1)), fine);
+    const base = snap(current, fine);
+    if (param.step && !fine && next === base) next = clamp(base + Math.sign(steps) * param.step, param.min, param.max);
+    commitValue(next);
+  };
 
   el.addEventListener('pointerdown', (e) => {
     onArm?.(el);
@@ -72,14 +90,18 @@ export function createKnob({ param, onChange, onArm }) {
     'wheel',
     (e) => {
       e.preventDefault();
-      const up = e.deltaY < 0;
-      let next = snap(fromNormalized(param, clamp(normalized + (up ? WHEEL_STEP : -WHEEL_STEP) * (e.shiftKey ? FINE : 1), 0, 1)), e.shiftKey);
-      const base = snap(current, e.shiftKey);
-      if (param.step && !e.shiftKey && next === base) next = clamp(base + (up ? param.step : -param.step), param.min, param.max);
-      commitValue(next);
+      nudge(e.deltaY < 0 ? 1 : -1, e.shiftKey);
     },
     { passive: false }
   );
+  el.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key in KEY_STEPS) nudge(KEY_STEPS[e.key], e.shiftKey);
+    else if (e.key === 'Home' || e.key === 'End') commit(e.key === 'Home' ? 0 : 1);
+    else if (e.key === 'Backspace' || e.key === 'Delete') commit(toNormalized(param, param.default));
+    else return;
+    e.preventDefault();
+  });
 
   return {
     el,

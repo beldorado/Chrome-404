@@ -3,6 +3,7 @@ import { effectShell, ramp, workletNode } from './lib.js';
 export default {
   id: 'bit-crusher',
   name: 'Bit Crusher',
+  short: 'Crusher',
   category: 'Character',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master'],
   worklet: 'worklets/crusher.js',

@@ -32,6 +32,7 @@ function crackleBuffer(ctx) {
 export default {
   id: 'vinyl-sim',
   name: 'Vinyl Sim',
+  short: 'Vinyl',
   category: 'Character',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master'],
   latency: BASE_DELAY,

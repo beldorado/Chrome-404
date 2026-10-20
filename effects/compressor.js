@@ -3,6 +3,7 @@ import { dbToGain, effectShell, ramp } from './lib.js';
 export default {
   id: 'compressor',
   name: 'Compressor',
+  short: 'Comp',
   category: 'Character',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master', 'input'],
   ui: 'compressor',

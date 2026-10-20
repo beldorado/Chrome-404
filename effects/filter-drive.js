@@ -22,6 +22,7 @@ function resonanceToQ(type, amount) {
 export default {
   id: 'filter-drive',
   name: 'Filter + Drive',
+  short: 'Filter',
   category: 'Filter',
   buses: ['bus1', 'bus2', 'bus3', 'bus4', 'master', 'input'],
   params: [

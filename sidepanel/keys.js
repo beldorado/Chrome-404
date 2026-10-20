@@ -19,6 +19,7 @@ export function actionFor(event, keyboardFocused = byKeyboard) {
   if (event.ctrlKey || event.metaKey || event.altKey) return null;
   const tag = event.target?.tagName;
   if (typing(event.target)) return null;
+  if (event.key === '?') return { kind: 'help' };
   if (event.code in BUS_KEYS) return { kind: 'bus', busId: BUS_KEYS[event.code] };
   const pad = PAD_KEYS.indexOf(event.code);
   if (pad >= 0) return { kind: 'pad', index: pad };

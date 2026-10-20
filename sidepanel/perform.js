@@ -814,8 +814,11 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       btn.classList.toggle('empty', bus.slots.length === 0);
       btn.classList.toggle('selected', busId === selected);
       btn.setAttribute('aria-pressed', String(lit));
-      const first = bus.slots[0] ? getEffect(bus.slots[0].effect).name : 'Empty';
-      effectName.textContent = bus.slots.length > 1 ? `${first} +${bus.slots.length - 1}` : first;
+      const first = bus.slots[0] ? getEffect(bus.slots[0].effect) : null;
+      effectName.textContent = first ? (first.short ?? first.name) : 'Empty';
+      btn.style.setProperty('--slots', String(Math.max(1, bus.slots.length)));
+      const chain = bus.slots.map((s) => getEffect(s.effect).name).join(', ');
+      btn.title = `${BUS_LABELS[busId]}${chain ? `: ${chain}` : ''}. Tap to switch on or off, hold to play only while held. Key ${KEY_LABELS[busId]}.`;
     }
 
     const slot = focusedSlot(state, selected);
