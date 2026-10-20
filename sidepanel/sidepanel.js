@@ -19,6 +19,11 @@ const AUTO_CONFIDENT = 0.2;
 const GR_RANGE_DB = 24;
 const MASTER_MAX = 1.5;
 const READOUT_MS = 1600;
+const METER_FLOOR_DB = -60;
+const PEAK_HOLD_MS = 1000;
+const PEAK_FALL_DB_S = 24;
+const CLIP_LEVEL = 0.999;
+const CLIP_HOLD_MS = 1500;
 const STATUS_INFO_MS = 4500;
 const STATUS_ACTION_MS = 8000;
 const STATUS_RESUME_MS = 2000;
@@ -34,6 +39,8 @@ let structureKey = '';
 let pointerDown = false;
 let pending = [];
 let readoutTimer = null;
+let peakHold = { db: METER_FLOOR_DB, at: 0, last: 0 };
+let clipTimer = null;
 let statusTimer = null;
 let statusMs = 0;
 let statusAction = null;
@@ -104,7 +111,7 @@ function setState(next) {
   }
   updateValues();
   perform.sync(next);
-  if (!next.sources.length) updateMeter({ peak: 0 });
+  if (!busy(next)) resetMeter();
   if (!busy(next)) updateTransport(null);
 }
 
@@ -579,9 +586,29 @@ function updateValues() {
   }
 }
 
+const meterPercent = (db) => `${clamp((db - METER_FLOOR_DB) / -METER_FLOOR_DB, 0, 1) * 100}%`;
+
 function updateMeter({ peak }) {
   const db = 20 * Math.log10(Math.max(peak, 1e-5));
-  $('meter').style.width = `${clamp((db + 60) / 60, 0, 1) * 100}%`;
+  const now = performance.now();
+  $('meter').style.width = meterPercent(db);
+  if (db >= peakHold.db) peakHold = { db, at: now, last: now };
+  else {
+    if (now - peakHold.at > PEAK_HOLD_MS) peakHold.db = Math.max(db, peakHold.db - (PEAK_FALL_DB_S * (now - peakHold.last)) / 1000);
+    peakHold.last = now;
+  }
+  $('meter-hold').style.left = meterPercent(peakHold.db);
+  $('meter-hold').hidden = peakHold.db <= METER_FLOOR_DB;
+  if (peak >= CLIP_LEVEL) {
+    $('clip').classList.add('on');
+    clearTimeout(clipTimer);
+    clipTimer = setTimeout(() => $('clip').classList.remove('on'), CLIP_HOLD_MS);
+  }
+}
+
+function resetMeter() {
+  peakHold = { db: METER_FLOOR_DB, at: 0, last: 0 };
+  updateMeter({ peak: 0 });
 }
 
 function updateTransport(transport) {

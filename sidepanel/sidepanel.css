@@ -206,7 +206,15 @@ select {
   font-family: var(--face-wide);
 }
 
+.meter-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px;
+  align-items: center;
+}
+
 .meter {
+  position: relative;
   height: 8px;
   background: repeating-linear-gradient(90deg, rgba(214, 246, 255, 0.1) 0 5px, transparent 5px 7px);
 }
@@ -217,6 +225,28 @@ select {
   background: repeating-linear-gradient(90deg, var(--oled) 0 5px, transparent 5px 7px);
   box-shadow: 0 0 8px rgba(140, 230, 255, 0.35);
   transition: width 60ms linear;
+}
+
+.meter-hold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -2px;
+  background: var(--oled);
+  box-shadow: 0 0 6px rgba(140, 230, 255, 0.6);
+}
+
+.clip {
+  width: 12px;
+  height: 8px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--hot) 22%, var(--glass));
+}
+
+.clip.on {
+  background: var(--hot);
+  box-shadow: 0 0 8px var(--hot), 0 0 2px var(--hot);
 }
 
 .transport {

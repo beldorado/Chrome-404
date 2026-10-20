@@ -75,7 +75,7 @@ export class AudioEngine {
     this.master = ctx.createGain();
     this.master.gain.value = this.state.master;
     this.analyser = ctx.createAnalyser();
-    this.analyser.fftSize = 1024;
+    this.analyser.fftSize = 4096;
     this.meterBuffer = new Float32Array(this.analyser.fftSize);
     this.pads = new PadBank(ctx, { onEnded: (index) => this.handlePadEnded(index) });
 

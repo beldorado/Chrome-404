@@ -521,6 +521,18 @@ function check(name, pass, detail = '') {
     await page.keyboard.press('Escape');
     check('Space is left to a control reached with Tab, but taken as tap after a mouse click', mouseFocusTaken === true && tabFocusTaken === false, `focused ${focused}; mouse-focus taken ${mouseFocusTaken}, tab-focus taken ${tabFocusTaken}`);
 
+    await engine('load-preset', { presetId: 'init' });
+    await engine('set-master', { level: 1.5 });
+    await engine('update-pad', { index: 2, changes: { level: 1.5, mode: 'Loop' } });
+    await engine('pad-press', { index: 2 });
+    await page.waitForFunction(() => document.getElementById('clip').classList.contains('on'), null, { timeout: 4000 }).catch(() => {});
+    check('The clip light comes on when the output goes over 0 dB, with a peak marker', await page.evaluate(() => document.getElementById('clip').classList.contains('on') && !document.getElementById('meter-hold').hidden && parseFloat(document.getElementById('meter-hold').style.left) > 95));
+    await engine('stop-pads');
+    await engine('set-master', { level: 0.9 });
+    await engine('update-pad', { index: 2, changes: { level: 1 } });
+    await page.waitForFunction(() => !document.getElementById('clip').classList.contains('on'), null, { timeout: 4000 }).catch(() => {});
+    check('…and goes out on its own', await page.evaluate(() => !document.getElementById('clip').classList.contains('on')));
+
     await page.keyboard.press('Shift+Slash');
     await page.waitForFunction(() => document.querySelector('.keymap')?.open, null, { timeout: 2000 }).catch(() => {});
     check('? opens the key map with all 23 keys', await page.evaluate(() => document.querySelector('.keymap').open && document.querySelectorAll('.keymap .cap').length === 23));

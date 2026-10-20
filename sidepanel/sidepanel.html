@@ -26,7 +26,10 @@
         <span id="readout-name"></span>
         <span id="readout-value"></span>
       </div>
-      <div class="meter" title="Output level"><div class="meter-fill" id="meter"></div></div>
+      <div class="meter-row">
+        <div class="meter" title="Output level"><div class="meter-fill" id="meter"></div><i class="meter-hold" id="meter-hold" aria-hidden="true"></i></div>
+        <i class="clip" id="clip" title="Lights when the output goes over 0 dB and distorts. Turn something down, or add a Limiter on Master FX." aria-hidden="true"></i>
+      </div>
     </div>
 
     <div class="transport">
