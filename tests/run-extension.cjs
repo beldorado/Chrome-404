@@ -153,6 +153,12 @@ function check(name, pass, detail = '') {
     check('Key E starts pad 3 looping', true);
     await page.waitForFunction(() => document.querySelector('#position').textContent !== '–.–', null, { timeout: 4000 });
     check('Beat clock runs while a pad plays', /^\d+\.\d$/.test(await page.textContent('#position')), await page.textContent('#position'));
+    await page.waitForFunction(() => !document.querySelectorAll('.pad')[2].querySelector('.pad-head').hidden, null, { timeout: 3000 }).catch(() => {});
+    const headAt = () => page.evaluate(() => parseFloat(document.querySelectorAll('.pad')[2].querySelector('.pad-head').style.left));
+    const headFrom = await headAt();
+    await page.waitForTimeout(250);
+    const headTo = await headAt();
+    check('A playing pad shows a moving playhead', Number.isFinite(headFrom) && headTo !== headFrom && (await page.evaluate(() => document.querySelectorAll('.pad')[0].querySelector('.pad-head').hidden)), `${headFrom?.toFixed(1)}% → ${headTo?.toFixed(1)}%`);
 
     await page.keyboard.press('KeyT');
     await page.waitForFunction(() => document.querySelector('.rec').classList.contains('armed') || document.querySelector('.rec').classList.contains('recording'));

@@ -19,6 +19,7 @@ const FX_NAMES = { bus1: 'Bus 1', bus2: 'Bus 2', bus3: 'Bus 3', bus4: 'Bus 4', i
 const ROUTE_COLOR = { bus1: 'bus1', bus2: 'bus2', dry: 'bus3' };
 const WAVE_W = 48;
 const WAVE_H = 20;
+const HEAD_STALE_S = 0.3;
 const SVG = 'http://www.w3.org/2000/svg';
 
 function stored(key, allowed, fallback) {
@@ -55,6 +56,9 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
   let knobs = [];
   let lastBeat = null;
   let transport = null;
+  let heads = {};
+  let headsAt = 0;
+  let headRaf = 0;
   const focus = new Map();
   const holds = new Map();
   const history = createUndo({ send, getState });
@@ -215,6 +219,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
     peakPath.classList.add('wave-peak');
     const path = document.createElementNS(SVG, 'path');
     svg.append(peakPath, path);
+    const head = h('i', { className: 'pad-head', hidden: true, 'aria-hidden': 'true' });
     const name = h('span', { className: 'pad-name' });
     const num = h('span', { className: 'pad-num', 'aria-hidden': 'true' });
     const group = h('span', { className: 'pad-group', 'aria-hidden': 'true' });
@@ -224,7 +229,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       num,
       group,
       h('span', { className: 'pad-key', textContent: KEY_LABELS[`pad${slot}`], 'aria-hidden': 'true' }),
-      svg,
+      h('span', { className: 'pad-wave-box' }, svg, head),
       name
     );
     let pressed = null;
@@ -263,7 +268,7 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
       const file = e.dataTransfer.files[0];
       if (file) loadFile(at(), file);
     });
-    return { el, path, peakPath, name, num, group, peaksKey: '' };
+    return { el, path, peakPath, head, name, num, group, peaksKey: '' };
   });
 
   const padRoute = h('div', { className: 'pad-route' });
@@ -858,8 +863,35 @@ export function createPerform({ root, send, getState, flash, armLearn, showStatu
     update(state);
   }
 
+  function drawHeads() {
+    headRaf = 0;
+    const state = getState();
+    const elapsed = (performance.now() - headsAt) / 1000;
+    let moving = false;
+    padEls.forEach((p, slot) => {
+      const i = bankIndex * PADS_PER_BANK + slot;
+      const head = heads[i];
+      const pad = state?.pads[i];
+      if (!head || !pad?.clip || !pad.playing || elapsed > HEAD_STALE_S) {
+        p.head.hidden = true;
+        return;
+      }
+      moving = true;
+      const length = head.end - head.start;
+      let at = head.at + head.rate * elapsed;
+      if (head.loop && length > 0) at = head.start + ((((at - head.start) % length) + length) % length);
+      else at = Math.min(at, head.end);
+      p.head.hidden = false;
+      p.head.style.left = `${clamp((at - pad.clip.start) / (pad.clip.end - pad.clip.start), 0, 1) * 100}%`;
+    });
+    if (moving) headRaf = requestAnimationFrame(drawHeads);
+  }
+
   function meter(next) {
     transport = next;
+    heads = next?.pads ?? {};
+    headsAt = performance.now();
+    if (!headRaf) headRaf = requestAnimationFrame(drawHeads);
     const state = getState();
     if (state) updateRec(state);
     editor.followPad(next?.pads?.[editor.editing()] ?? null);
